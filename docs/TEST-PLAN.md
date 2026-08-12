@@ -24,13 +24,22 @@ see notes.
       `theme/assets/global.vbt.css` and `global.vbt.js`.
 - [x] **A4 — Theme provisioning.** Staging + Prod themes created on all three
       stores via CLI; Prod published live, Dawn's original theme preserved.
-- [!] **A5 — Theme Access tokens work in CI.** Blocked. Two separate batches of
-      `shptka_…` tokens returned 401 from both the Shopify CLI and a raw Admin
-      API call, on all three stores. Store handles are confirmed correct (they
-      resolve and redirect to `/password`), so this is the token, not the store.
-      Browser OAuth (`shopify auth login`) works and covers local CLI use, but
-      GitHub Actions cannot use it — so every deploy/diff/promote test remains
-      blocked until valid tokens exist.
+- [x] **A5 — CI auth.** Resolved, but not the way it started. Three separate
+      credentials were tried and rejected before one worked:
+      | Value | Prefix | Result |
+      |---|---|---|
+      | Theme Access password | `shptka_` | 401 — twice, on all three stores |
+      | Storefront API token | `shpss_` | 401 — wrong API entirely |
+      | **Client credentials grant** | mints `shpat_` | **works** |
+      Store handles were verified correct throughout (they resolve and redirect
+      to `/password`), so the failures were always credential-side.
+- [x] **A7 — Client credentials grant.** `POST /admin/oauth/access_token` with
+      `grant_type=client_credentials` returns an `shpat_` Admin API token,
+      `scope=write_themes`, `expires_in=86399`. Verified end to end: the minted
+      token drives `shopify theme list` and a full CI deploy.
+      Adopted over a stored password because nothing long-lived sits in secrets
+      and the credentials are org-level — so onboarding a store needs no new
+      secret, only the app installed there.
 - [x] **A6 — `ACCESS_PAT` cross-repo checkout works.** A classic PAT with `repo`
       scope reads all four repos; both `drift-detection` and
       `content-operations` successfully check out a second repo with it.
@@ -39,18 +48,30 @@ see notes.
 
 - [ ] **B1 — Staging fan-out.** Push to `staging` deploys to all three staging
       themes; `fail-fast: false` means one bad site does not block the others.
-- [ ] **B2 — Manual single-site deploy.** `workflow_dispatch` with a site
-      picked deploys only that site.
-- [ ] **B3 — Build guard.** Deleting the build step (or shipping without it)
-      is caught by the artefact assertion rather than silently deploying a
-      theme with no CSS/JS.
+      Deferred: only site-a has the app installed, so the matrix is narrowed to
+      `SITE-A` for now.
+- [x] **B2 — Manual single-site deploy.** `workflow_dispatch` with `SITE-A`
+      deployed only site-a, to its **Staging** theme
+      (`Sandbox Staging` #157241114762) — confirmed from the push result, so the
+      staging/prod theme IDs are not transposed.
+- [~] **B3 — Build guard.** Positive case confirmed: "Build artefacts present"
+      before every push. The negative case (deploy with the build step removed)
+      is still untested — and it is the one that matters, so it should not be
+      counted as passing yet.
+- [x] **B3a — Token never leaks.** Grepped the full deploy log for
+      `shpat_[a-f0-9]{6}`: no match. `::add-mask::` plus passing the token via
+      `GITHUB_ENV` rather than step outputs holds up.
 - [ ] **B4 — Content is not clobbered.** Edit `page.sandbox-content.json` in a
       Staging theme editor, run a code deploy, confirm the edit **survives**
       (this is what the ignore list buys).
-- [ ] **B5 — Production needs approval.** A release triggers production deploy
-      and it **waits**; nothing reaches any store until a reviewer approves.
+- [~] **B5 — Production needs approval.** The gate holds. Run status `waiting`,
+      `approve` job pending on `production-approval` with reviewer
+      `chinmay-garge`, and — the point — the `deploy` job never started, so
+      nothing reached the store. Awaiting a human approval to confirm the
+      resume path. **This is the control that could not be tested on the real
+      repo at all**, because creating the environment required admin there.
 - [ ] **B6 — Single approval covers all sites.** One approval releases the
-      whole matrix.
+      whole matrix. Needs more than one site installed.
 - [ ] **B7 — Backup artefact.** Each production run uploads
       `backup-<site>-<run_id>` before overwriting.
 - [ ] **B8 — Rollback.** Re-run production against an older tag and confirm the
@@ -118,14 +139,21 @@ see notes.
 
 ## E. Locales
 
-- [ ] **E1 — The bug reproduces.** `sandbox-promo` shows
-      `missing translation: t:sections.sandbox-promo.name` in the theme editor.
-- [ ] **E2 — Committing keys is not enough.** Adding the keys in git and
-      running a normal deploy leaves the editor still broken.
-- [ ] **E3 — Sync fixes it.** `sync-locales.yml` against staging clears the
-      warning.
-- [ ] **E4 — Production locale sync is gated.** Targeting production requires
-      approval; targeting staging does not.
+- [x] **E1 — The bug's precondition is present.** Pulled the deployed staging
+      theme's locale file: seven `sandbox-*` sections have entries and
+      `sandbox-promo` has none — the exact state that renders
+      `missing translation: t:sections.sandbox-promo.name` in the editor.
+- [x] **E2 — Committing keys is not enough.** The important one. Changed
+      `sandbox-hero.name` to `"Sandbox Hero (locale probe)"`, pushed, ran a
+      **fully successful** deploy — and the theme still read `"Sandbox Hero"`.
+      A green deploy that silently does not ship your change is precisely the
+      bug that reached a live client store.
+- [x] **E3 — Sync fixes it.** `sync-locales.yml` against staging updated the
+      theme to the probe value. Probe then reverted and the theme re-synced;
+      the `sandbox-promo` fixture was verified still intact afterwards.
+- [~] **E4 — Production locale sync is gated.** Staging half confirmed: the
+      `approve` job reported `skipped` while `sync` succeeded, so routine
+      staging syncs are not gated. The production half is untested.
 
 ## F. Onboarding a new site
 
@@ -162,3 +190,6 @@ Recorded as they come up, with the process change each one implies.
 | 2 | Theme Access tokens from the app UI can be unusable; the emailed value is authoritative (A5) | Onboarding runbook must say "use the emailed password" |
 | 3 | `gh` fails with `fatal: not a git repository` when both checkouts use `path:`, because the workspace root is not a repo | Every `gh` call in a multi-checkout workflow must pass `--repo "$GITHUB_REPOSITORY"`. Caught only by running it — the workflow was valid YAML and the diff steps passed. |
 | 4 | Line endings must be pinned repo-wide | Added `.gitattributes` with `* text=auto eol=lf` to all four repos. Without it a Windows checkout rewrites text to CRLF and byte-comparison reports every file as changed — the same effect that made 49 identical real files look diverged. Drift detection and content diffing both depend on byte equality. |
+| 5 | Shopify credential prefixes are easy to confuse, and all failures look identical (`401`) | Three wrong credentials were tried before one worked. Worth stating explicitly in the runbook: `shptka_` = Theme Access password, `shpss_` = Storefront token **and also the client secret**, `shpat_` = Admin API token (the one theme operations need). A 401 never says which mistake you made. |
+| 6 | A green deploy can silently not ship your change (E2) | The single most dangerous finding. Because `locales/*.json` is ignored by design, a locale change is committed, deployed successfully, and still absent from the theme. Any process doc must pair "locale changed?" with "run Sync Locales" — reading a green checkmark as proof is wrong. |
+| 7 | `uses:` resolves from `GITHUB_WORKSPACE`, not the workflow file | A local composite action is `./.github/actions/x` in the deploy workflows but `./hub/.github/actions/x` in `content-operations.yml`, which checks the repo out into `hub/`. Same class of bug as finding 3: multi-checkout workflows break path assumptions. |
