@@ -262,6 +262,53 @@ change is worth more than recovering from one.
 - [ ] **G3 — Dropped commit.** Reproduce a follow-up commit being lost when a
       PR merges mid-push, and find a guard against it.
 
+## J. GitHub–theme connection
+
+A gap found by being asked a direct question: the whole content lane rests on
+"the site repo **is** Staging's content", and that connection was never actually
+made. Editor commits were simulated by pushing to the site repos, which produces
+the same git effect but proves nothing about the integration.
+
+It cannot be scripted — `shopify theme` has no subcommand for it, and there is no
+API. It is configured only in the Shopify admin, so it needs a human.
+
+**Chosen model** — each theme connected to its own branch, per site repo:
+
+| Branch | Theme |
+|---|---|
+| `staging` | Sandbox Staging |
+| `main` | Sandbox Prod (live) |
+
+This differs from the client setup, where only Staging is connected. It makes
+production content git-tracked, so content rollback becomes a git operation and
+promotion can become a **merge** rather than a scoped CLI push.
+
+**The risk it introduces, and why protection was added first.** Connecting the
+live theme means any commit to `main` publishes immediately — which would bypass
+the approval gate that currently protects production. Mitigation: `main` is
+branch-protected on all three site repos (no force pushes, no deletions), and
+the gated promote workflow is the only intended writer. Honest caveat: on a
+single-owner repo, protection cannot lock out the owner, so this documents intent
+more than it enforces it. In a real org, pushes to `main` should be restricted to
+the workflow's app or team.
+
+- [ ] **J1 — Editor → commit.** An edit in the Staging theme editor appears as a
+      commit on the site repo's `staging` branch. This is the premise everything
+      else assumes.
+- [ ] **J2 — Commit → theme.** A commit to `staging` reaches the Staging theme.
+- [ ] **J3 — Echo-back from a CI deploy.** The one to watch. CI pushes code to a
+      theme that the integration also writes to, so Shopify may commit the deploy
+      back into the branch. **Not hypothetical** — the client's own troubleshooting
+      documents it causing non-fast-forward rejections. Needs measuring: does it
+      happen, does it loop, does it trip `drift-detection` or `content-changed`.
+- [ ] **J4 — Commit to `main` publishes.** Confirm the risk above is real, then
+      confirm protection plus the gated workflow contains it.
+- [ ] **J5 — Promotion as a merge.** If J1–J4 behave, promotion could become
+      "commit the ticked files to `main`" instead of `theme push --only`, and the
+      `content-snapshots-*` branches become redundant because git history is the
+      snapshot. **Deliberately not built yet** — rewriting the promote job before
+      observing the echo-back would be guessing.
+
 ## Findings
 
 Recorded as they come up, with the process change each one implies.
