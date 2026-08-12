@@ -1,0 +1,90 @@
+name: Shopify access token
+description: >-
+  Obtains a short-lived Admin API access token via the client credentials grant
+  and exports it as SHOPIFY_CLI_THEME_TOKEN for subsequent steps in the job.
+
+# Why this exists
+# ---------------
+# The alternative is a long-lived Theme Access password stored per environment.
+# This approach is preferred because:
+#   - no long-lived credential sits in GitHub secrets; tokens live ~24h
+#   - one org-level client_id/client_secret covers every store, so onboarding a
+#     new site needs no new secret — just the app installed on that store
+#
+# The token is written to GITHUB_ENV rather than a step output, so it never
+# passes through the outputs plumbing, and it is registered with ::add-mask::
+# so it cannot be printed in logs.
+
+inputs:
+  store:
+    description: 'Store prefix, e.g. site-a-store'
+    required: true
+  client-id:
+    description: 'App client ID'
+    required: true
+  client-secret:
+    description: 'App client secret'
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        STORE: ${{ inputs.store }}
+        CLIENT_ID: ${{ inputs.client-id }}
+        CLIENT_SECRET: ${{ inputs.client-secret }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "$CLIENT_ID" ] || [ -z "$CLIENT_SECRET" ]; then
+          echo "::error::SHOPIFY_CLIENT_ID / SHOPIFY_CLIENT_SECRET are not set."
+          exit 1
+        fi
+
+        # Capture body and status separately so a failure can be reported
+        # without ever echoing the response body (it may carry sensitive detail).
+        http_status=$(curl -sS -o resp.json -w '%{http_code}' \
+          -X POST "https://${STORE}.myshopify.com/admin/oauth/access_token" \
+          -H 'Content-Type: application/x-www-form-urlencoded' \
+          --data-urlencode "client_id=${CLIENT_ID}" \
+          --data-urlencode "client_secret=${CLIENT_SECRET}" \
+          --data-urlencode 'grant_type=client_credentials' \
+          --max-time 30)
+
+        if [ "$http_status" != "200" ]; then
+          echo "::error::Token request to ${STORE} failed with HTTP ${http_status}."
+          echo "Common causes:"
+          echo "  401/403 - app is a legacy 'custom app'; the client credentials grant"
+          echo "            requires a Dev Dashboard app owned by your organisation"
+          echo "  404     - the app is not installed on this store"
+          echo "  400     - malformed request or wrong grant_type"
+          # Report only the error code, never the whole body.
+          jq -r '.error // .errors // empty' resp.json 2>/dev/null | head -1 || true
+          rm -f resp.json
+          exit 1
+        fi
+
+        token=$(jq -r '.access_token // empty' resp.json)
+        scopes=$(jq -r '.scope // "unknown"' resp.json)
+        expires=$(jq -r '.expires_in // "unknown"' resp.json)
+        rm -f resp.json
+
+        if [ -z "$token" ]; then
+          echo "::error::Token request returned 200 but contained no access_token."
+          exit 1
+        fi
+
+        # Mask before the value can appear anywhere else in the log.
+        echo "::add-mask::$token"
+        echo "SHOPIFY_CLI_THEME_TOKEN=$token" >> "$GITHUB_ENV"
+
+        echo "Obtained token for ${STORE} (expires in ${expires}s)"
+        echo "Granted scopes: ${scopes}"
+
+        # Theme work needs write_themes. Warn rather than fail: read-only jobs
+        # such as show-diff are legitimate with read_themes alone.
+        case "$scopes" in
+          *write_themes*) : ;;
+          *) echo "::warning::Granted scopes do not include write_themes — any push will fail with 403." ;;
+        esac

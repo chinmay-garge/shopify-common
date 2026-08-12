@@ -86,9 +86,14 @@ jobs:
             echo "extra=" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Get Shopify access token
+        uses: ./.github/actions/shopify-token
+        with:
+          store: ${{ vars.STORE }}
+          client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+
       - name: Push locales only
-        env:
-          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
         run: |
           shopify theme push -j \
             --path theme/ \

@@ -142,9 +142,17 @@ jobs:
       - name: Install Shopify CLI
         run: npm install -g @shopify/cli
 
+      # NOTE the ./hub/ prefix. `uses:` resolves relative to GITHUB_WORKSPACE,
+      # and this repo is checked out into hub/ — so the bare ./.github/... path
+      # used by the deploy workflows would not resolve here.
+      - name: Get Shopify access token
+        uses: ./hub/.github/actions/shopify-token
+        with:
+          store: ${{ vars.STORE }}
+          client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+
       - name: Pull content templates from Prod
-        env:
-          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
         run: |
           mkdir -p prod
           shopify theme pull \
@@ -229,10 +237,15 @@ jobs:
       - name: Install Shopify CLI
         run: npm install -g @shopify/cli
 
+      - name: Get Shopify access token
+        uses: ./hub/.github/actions/shopify-token
+        with:
+          store: ${{ vars.STORE }}
+          client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+
       - name: Snapshot current Prod content before overwriting
         working-directory: site
-        env:
-          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
         run: |
           # Pull what is live NOW, commit it to a per-site snapshot branch, so a
           # bad promotion can always be reverted to a known-good state.
@@ -260,8 +273,6 @@ jobs:
 
       - name: Push ticked content to Prod
         working-directory: site
-        env:
-          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
         run: |
           set -o pipefail
           shopify theme push \

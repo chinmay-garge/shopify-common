@@ -64,12 +64,40 @@ Per-site environments (`SITE-A` / `SITE-B` / `SITE-C`):
 | `STORE` | variable | store prefix |
 | `THEME_ID` | variable | production theme |
 | `THEME_ID_STAGING` | variable | staging theme |
-| `THEME_ACCESS_TOKEN` | secret | Theme Access app password |
 
-Repo secret `ACCESS_PAT` — a PAT with `repo` scope. Required because
-`content-operations.yml` checks out the site repos, and the built-in
-`GITHUB_TOKEN` is scoped to one repo only. Each site repo needs its own copy
-for drift detection to read this repo.
+Repo secrets:
+
+| Key | Purpose |
+|---|---|
+| `SHOPIFY_CLIENT_ID` | app client ID, used to mint Shopify tokens at runtime |
+| `SHOPIFY_CLIENT_SECRET` | app client secret |
+| `ACCESS_PAT` | GitHub PAT with `repo` scope, for cross-repo checkout |
+
+### Shopify auth
+
+No Shopify token is stored anywhere. Each job mints a short-lived one via the
+[client credentials grant](https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/client-credentials-grant),
+using the local composite action `.github/actions/shopify-token`. Tokens last
+about 24 hours, are masked with `::add-mask::`, and are passed to later steps
+through `GITHUB_ENV` rather than step outputs.
+
+Two benefits over a stored Theme Access password: nothing long-lived sits in
+secrets, and because the credentials are org-level, onboarding a new store needs
+**no new secret** — only the app installed on that store plus an environment
+holding its `STORE` / `THEME_ID` / `THEME_ID_STAGING`.
+
+The grant requires an app created in the **Dev Dashboard** and owned by your
+organisation. A legacy "custom app" created under *Settings → Apps and sales
+channels → Develop apps* is **not** eligible and will be rejected.
+
+One wrinkle worth knowing: `uses:` resolves relative to `GITHUB_WORKSPACE`, so
+the deploy workflows reference `./.github/actions/shopify-token` while
+`content-operations.yml` — which checks this repo out into `hub/` — must
+reference `./hub/.github/actions/shopify-token`.
+
+`ACCESS_PAT` is needed because `content-operations.yml` checks out the site
+repos and the built-in `GITHUB_TOKEN` is scoped to a single repo. Each site repo
+needs its own copy so drift detection can read this one.
 
 ## The fixtures
 

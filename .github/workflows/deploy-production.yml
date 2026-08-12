@@ -87,9 +87,16 @@ jobs:
             fi
           done
 
+      # One call covers every later step in this job — the action exports
+      # SHOPIFY_CLI_THEME_TOKEN via GITHUB_ENV.
+      - name: Get Shopify access token
+        uses: ./.github/actions/shopify-token
+        with:
+          store: ${{ vars.STORE }}
+          client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+
       - name: Back up current live theme
-        env:
-          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
         run: |
           mkdir -p ./backup
           shopify theme pull \
@@ -105,8 +112,6 @@ jobs:
 
       - name: Push theme code to Production
         id: push
-        env:
-          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
         run: |
           set -o pipefail
           shopify theme push -j \
