@@ -78,7 +78,21 @@ see notes.
 - [x] **B7 — Backup artefact.** `backup-SITE-A-31624704580`, 596 KB, retained 90
       days (expires 2026-11-10). Taken before the overwrite, so it is a genuine
       rollback point rather than a record of what was just deployed.
-- [ ] **B8 — Rollback.** Both modes still to be exercised against a real deploy.
+- [x] **B8 — Rollback.** Both modes exercised against a real live theme, in
+      opposite directions, using `theme_version` as an unambiguous marker:
+      | Action | Before | After |
+      |---|---|---|
+      | `restore-backup` from run 31627539208 | `2026-08-12-1` | `16.0.0` |
+      | `redeploy-tag` at `2026-08-12-1` | `16.0.0` | `2026-08-12-1` |
+      Each run snapshotted the current state first
+      (`pre-rollback-SITE-A-<run_id>`), so a rollback is itself reversible —
+      which matters, because a rollback is a change made under pressure and is
+      just as capable of being wrong.
+- [x] **B8a — Bad rollback requests fail before the gate.** A `redeploy-tag`
+      request with no `ref` failed at `Check inputs`; both the approval job and
+      the rollback job were **skipped**. Validating before asking for approval
+      is the point: an approver should never be shown an incoherent request to
+      rubber-stamp.
 - [x] **B9 — Version stamping.** `Cut a Release` bumped `theme_version` from
       Dawn's `16.0.0` to `2026-08-12-1` on `main`, so the deployed theme is
       identifiable in the Shopify admin.
