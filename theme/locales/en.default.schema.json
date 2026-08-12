@@ -3400,7 +3400,7 @@
     "sandbox-hero": {
       "name": "Sandbox Hero",
       "settings": {
-        "eyebrow": "Eyebrow",
+        "eyebrow": "Eyebrow text",
         "heading": "Heading",
         "body": "Body",
         "use_h1": "Render heading as H1",
