@@ -1,0 +1,21 @@
+{
+  "sections": {
+    "main": {
+      "type": "main-page",
+      "settings": {
+        "padding_top": 28,
+        "padding_bottom": 28
+      }
+    },
+    "editable": {
+      "type": "sandbox-content-block",
+      "settings": {
+        "heading": "Editable content",
+        "body": "<p>This text is owned by the CONTENT lane. Edit it in the Staging theme editor, then use show-diff / promote to ship it.</p>",
+        "revision": "r1",
+        "padding": 32
+      }
+    }
+  },
+  "order": ["main", "editable"]
+}

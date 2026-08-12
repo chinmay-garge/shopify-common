@@ -1,0 +1,112 @@
+name: Deploy - Staging
+
+# CODE lane, staging. Fans out over STAGING_SITES and pushes built theme code
+# to each site's Staging theme. No approval gate — staging is meant to be cheap
+# and continuous.
+#
+# Everything in the ignore list below is CONTENT, owned by editors in the
+# Shopify theme editor rather than by git. Pushing it here would clobber their
+# work, so it is excluded and promoted separately by content-operations.yml.
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Site to deploy (default: all)'
+        type: choice
+        default: All
+        options: [All, SITE-A, SITE-B, SITE-C]
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        env:
+          SITES: ${{ vars.STAGING_SITES }}
+          PICKED: ${{ github.event.inputs.site }}
+        run: |
+          if [ -n "$PICKED" ] && [ "$PICKED" != "All" ]; then
+            printf 'matrix=["%s"]\n' "$PICKED" >> "$GITHUB_OUTPUT"
+          else
+            json=$(echo "$SITES" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc .)
+            echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Resolved sites: ${PICKED:-$SITES}"
+
+  deploy:
+    needs: setup
+    if: ${{ needs.setup.outputs.matrix != '[]' }}
+    name: Deploy (${{ matrix.site }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        site: ${{ fromJson(needs.setup.outputs.matrix) }}
+    environment: ${{ matrix.site }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build theme
+        run: npm run build
+
+      - name: Fail fast if build output is missing
+        run: |
+          # Guards the failure mode where a deploy ships without built assets.
+          for f in theme/assets/global.vbt.css theme/assets/global.vbt.js; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Expected build artefact $f is missing or empty — refusing to deploy."
+              exit 1
+            fi
+          done
+          echo "Build artefacts present."
+
+      - name: Push theme code to Staging
+        id: push
+        env:
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
+        run: |
+          shopify theme push -j \
+            --path theme/ \
+            --ignore "src/*" \
+            --ignore package.json \
+            --ignore config/settings_data.json \
+            --ignore "locales/*.json" \
+            --ignore "sections/*.json" \
+            --ignore "templates/*.json" \
+            --ignore "templates/customers/*.json" \
+            --theme ${{ vars.THEME_ID_STAGING }} \
+            --store ${{ vars.STORE }} > push-result.json
+          cat push-result.json
+
+      - name: Write summary
+        if: always()
+        run: |
+          if [ -s push-result.json ]; then
+            {
+              echo "### ${{ matrix.site }}"
+              echo "- Theme: $(jq -r '.theme.name' push-result.json) (#$(jq -r '.theme.id' push-result.json))"
+              echo "- [Preview]($(jq -r '.theme.preview_url' push-result.json))"
+              echo "- [Editor]($(jq -r '.theme.editor_url' push-result.json))"
+              echo ""
+              echo "_Locale files are NOT pushed by this workflow — use \`Sync Locales\` if you changed \`locales/*.json\`._"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ${{ matrix.site }}: push failed, no output captured" >> "$GITHUB_STEP_SUMMARY"
+          fi

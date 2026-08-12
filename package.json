@@ -1,0 +1,34 @@
+{
+  "name": "shopify-common",
+  "description": "Sandbox shared theme — mirrors the multi-site Shopify CI/CD architecture for testing",
+  "type": "module",
+  "private": true,
+  "version": "0.0.1",
+  "scripts": {
+    "release": "./release.sh",
+    "dev:a": "npm-run-all -p tailwind:watch esbuild:watch shopify:dev -- --store site-a-store",
+    "dev:b": "npm-run-all -p tailwind:watch esbuild:watch shopify:dev -- --store site-b-store",
+    "dev:c": "npm-run-all -p tailwind:watch esbuild:watch shopify:dev -- --store site-c-store",
+    "push:a": "npm run build && npm run shopify:push -- --store site-a-store",
+    "push:b": "npm run build && npm run shopify:push -- --store site-b-store",
+    "push:c": "npm run build && npm run shopify:push -- --store site-c-store",
+    "pull:a": "npm run shopify:pull -- --store site-a-store",
+    "pull:b": "npm run shopify:pull -- --store site-b-store",
+    "pull:c": "npm run shopify:pull -- --store site-c-store",
+    "purge": "rm -f ./theme/assets/*.vbt.*",
+    "build": "npm run tailwind:compile && npm run esbuild:bundle",
+    "esbuild:watch": "node build.js",
+    "esbuild:bundle": "node build.js --bundle",
+    "shopify:dev": "shopify theme dev --port=9333 --path ./theme/",
+    "shopify:push": "shopify theme push --path ./theme/",
+    "shopify:pull": "shopify theme pull --path ./theme/",
+    "tailwind:compile": "npx @tailwindcss/cli -i ./src/tailwind.config.css -o ./theme/assets/global.vbt.css",
+    "tailwind:watch": "npx @tailwindcss/cli -i ./src/tailwind.config.css -o ./theme/assets/global.vbt.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.1.8",
+    "esbuild": "^0.24.0",
+    "npm-run-all": "^4.1.5",
+    "tailwindcss": "^4.1.8"
+  }
+}

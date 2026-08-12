@@ -1,0 +1,111 @@
+name: Sync Locales
+
+# Exists because BOTH deploy workflows permanently ignore locales/*.json.
+#
+# That ignore is deliberate (translators own locale content in the Shopify
+# admin, and a deploy must not clobber it), but it has a sharp edge: when a
+# developer adds a schema translation key in git — e.g. for a new section —
+# that key never reaches the live theme, and the theme editor renders
+# "missing translation: t:sections.<name>.name".
+#
+# `sandbox-promo` is the permanent fixture for that bug: its keys are absent
+# from the locale file on purpose. `sandbox-*` sections other than promo have
+# their keys committed, so running this workflow is what makes them show up
+# with proper names in the editor.
+#
+# Manual only, and defaults to Staging. Production requires opting in via the
+# `target` input AND passes through the approval gate.
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Site to sync (default: all)'
+        type: choice
+        default: All
+        options: [All, SITE-A, SITE-B, SITE-C]
+      target:
+        description: 'Which theme to sync'
+        type: choice
+        default: staging
+        options: [staging, production]
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - id: matrix
+        env:
+          SITES: ${{ vars.STAGING_SITES }}
+          PICKED: ${{ github.event.inputs.site }}
+        run: |
+          if [ -n "$PICKED" ] && [ "$PICKED" != "All" ]; then
+            printf 'matrix=["%s"]\n' "$PICKED" >> "$GITHUB_OUTPUT"
+          else
+            json=$(echo "$SITES" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc .)
+            echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          fi
+
+  # Only gates when the target is production; skipped entirely for staging.
+  approve:
+    needs: setup
+    if: ${{ github.event.inputs.target == 'production' }}
+    runs-on: ubuntu-latest
+    environment: production-approval
+    steps:
+      - run: echo "Approved locale sync to PRODUCTION for ${{ needs.setup.outputs.matrix }}"
+
+  sync:
+    needs: [setup, approve]
+    # `always()` so a skipped approve job (staging path) does not skip this one,
+    # while a FAILED or CANCELLED approve still blocks production.
+    if: ${{ always() && needs.setup.result == 'success' && needs.approve.result != 'failure' && needs.approve.result != 'cancelled' }}
+    name: Sync locales (${{ matrix.site }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        site: ${{ fromJson(needs.setup.outputs.matrix) }}
+    environment: ${{ matrix.site }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli
+
+      - name: Resolve target theme
+        id: t
+        run: |
+          if [ "${{ github.event.inputs.target }}" = "production" ]; then
+            echo "theme=${{ vars.THEME_ID }}" >> "$GITHUB_OUTPUT"
+            echo "extra=--allow-live" >> "$GITHUB_OUTPUT"
+          else
+            echo "theme=${{ vars.THEME_ID_STAGING }}" >> "$GITHUB_OUTPUT"
+            echo "extra=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push locales only
+        env:
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
+        run: |
+          shopify theme push -j \
+            --path theme/ \
+            --only "locales/*.json" \
+            ${{ steps.t.outputs.extra }} \
+            --theme ${{ steps.t.outputs.theme }} \
+            --store ${{ vars.STORE }} > push-result.json
+          cat push-result.json
+
+      - name: Write summary
+        if: always()
+        run: |
+          {
+            echo "### ${{ matrix.site }} — locales -> ${{ github.event.inputs.target }}"
+            if [ -s push-result.json ]; then
+              echo "- Theme: $(jq -r '.theme.name' push-result.json) (#$(jq -r '.theme.id' push-result.json))"
+            else
+              echo "- Sync failed, no output captured"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

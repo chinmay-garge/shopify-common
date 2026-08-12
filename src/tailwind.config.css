@@ -1,0 +1,31 @@
+/* Tailwind entry for the sandbox shared theme.
+   Compiled to theme/assets/global.vbt.css by `npm run tailwind:compile`. */
+
+@import 'tailwindcss';
+
+/* Scan Liquid templates so utility classes used in sections are emitted. */
+@source '../theme/**/*.liquid';
+
+@layer components {
+  .sandbox-section {
+    display: block;
+  }
+
+  .sandbox-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .sandbox-badge--neutral {
+    background: #eeeeee;
+    color: #333333;
+  }
+
+  .sandbox-badge--accent {
+    background: #1a73e8;
+    color: #ffffff;
+  }
+}

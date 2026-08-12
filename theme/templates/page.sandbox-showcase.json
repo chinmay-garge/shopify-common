@@ -1,0 +1,70 @@
+{
+  "sections": {
+    "main": {
+      "type": "main-page",
+      "settings": {
+        "padding_top": 28,
+        "padding_bottom": 28
+      }
+    },
+    "hero": {
+      "type": "sandbox-hero",
+      "settings": {
+        "eyebrow": "Sandbox",
+        "heading": "Shared code, three sites",
+        "body": "<p>Every section below is deployed from shopify-common.</p>",
+        "use_h1": true,
+        "cta_label": "Learn more",
+        "padding_top": 40,
+        "padding_bottom": 40
+      }
+    },
+    "banner": {
+      "type": "sandbox-banner",
+      "settings": {
+        "heading": "Divergence fixture",
+        "subheading": "site-b has a different copy of this file on purpose.",
+        "dismissible": true
+      }
+    },
+    "cards": {
+      "type": "sandbox-cards",
+      "blocks": {
+        "c1": { "type": "card", "settings": { "title": "One" } },
+        "c2": { "type": "card", "settings": { "title": "Two" } },
+        "c3": { "type": "card", "settings": { "title": "Three" } }
+      },
+      "block_order": ["c1", "c2", "c3"],
+      "settings": { "heading": "Sandbox cards" }
+    },
+    "composite": {
+      "type": "sandbox-composite",
+      "blocks": {
+        "i1": { "type": "item", "settings": { "badge_label": "New", "badge_tone": "accent" } },
+        "i2": { "type": "item", "settings": { "badge_label": "Note", "badge_tone": "neutral" } }
+      },
+      "block_order": ["i1", "i2"],
+      "settings": { "heading": "Snippet + built-asset dependency" }
+    },
+    "promo": {
+      "type": "sandbox-promo",
+      "settings": {
+        "heading": "Missing-translation fixture",
+        "code": "SANDBOX10"
+      }
+    },
+    "quote": {
+      "type": "sandbox-quote",
+      "settings": {
+        "quote": "<p>If it is not tested, it is not a process.</p>",
+        "attribution": "Sandbox",
+        "alignment": "center"
+      }
+    },
+    "footer_cta": {
+      "type": "sandbox-footer-cta",
+      "settings": { "heading": "Ready to go?", "cta_label": "Get started" }
+    }
+  },
+  "order": ["main", "hero", "banner", "cards", "composite", "promo", "quote", "footer_cta"]
+}

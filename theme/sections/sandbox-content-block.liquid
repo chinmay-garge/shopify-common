@@ -1,0 +1,46 @@
+{%- comment -%}
+  Sandbox section 9 of 10 — CONTENT LANE TEST.
+
+  This section is placed into templates/page.sandbox-content.json and its
+  text is meant to be edited by "content editors" in the Shopify theme
+  editor (i.e. changed on the Staging theme, not in git).
+
+  It exercises the CODE vs CONTENT split:
+    - This .liquid file  -> CODE lane, owned by shopify-common, deployed by CI
+    - templates/*.json   -> CONTENT lane, ignored by CI, promoted only via
+                            content-operations.yml (refresh -> diff -> promote)
+
+  Editing this section's text in the Staging theme editor and then running a
+  show-diff should surface the change; promote should ship it to Prod.
+{%- endcomment -%}
+
+{% liquid
+  assign s = section.settings
+%}
+
+<div class="sandbox-content-block" style="padding: {{ s.padding }}px 20px;">
+  {%- if s.heading != blank -%}
+    <h2 class="sandbox-content-block__heading">{{ s.heading }}</h2>
+  {%- endif -%}
+
+  {%- if s.body != blank -%}
+    <div class="sandbox-content-block__body">{{ s.body }}</div>
+  {%- endif -%}
+
+  <p class="sandbox-content-block__revision">Content revision: {{ s.revision }}</p>
+</div>
+
+{% schema %}
+{
+  "name": "t:sections.sandbox-content-block.name",
+  "tag": "section",
+  "class": "sandbox-section",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "t:sections.sandbox-content-block.settings.heading", "default": "Editable content" },
+    { "type": "richtext", "id": "body", "label": "t:sections.sandbox-content-block.settings.body", "default": "<p>Edit me in the theme editor to test content promotion.</p>" },
+    { "type": "text", "id": "revision", "label": "t:sections.sandbox-content-block.settings.revision", "default": "r1" },
+    { "type": "range", "id": "padding", "min": 0, "max": 100, "step": 4, "unit": "px", "label": "t:sections.sandbox-content-block.settings.padding", "default": 32 }
+  ],
+  "presets": [{ "name": "t:sections.sandbox-content-block.name" }]
+}
+{% endschema %}

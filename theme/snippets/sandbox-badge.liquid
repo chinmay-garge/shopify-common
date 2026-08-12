@@ -1,0 +1,17 @@
+{%- comment -%}
+  Snippet dependency for sections/sandbox-composite.liquid.
+  Kept deliberately small — its whole job is to be a file that MUST be
+  ported alongside its parent section, so we can test what happens when a
+  dependency is forgotten.
+
+  Params:
+    label (string) — badge text
+    tone  (string) — "neutral" | "accent"
+{%- endcomment -%}
+
+{%- liquid
+  assign badge_label = label | default: 'Badge'
+  assign badge_tone = tone | default: 'neutral'
+-%}
+
+<span class="sandbox-badge sandbox-badge--{{ badge_tone }}">{{ badge_label }}</span>

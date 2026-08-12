@@ -1,0 +1,26 @@
+# Normalise all text to LF in the repository AND in the working tree.
+#
+# Not cosmetic. Without this, a Windows checkout rewrites text files to CRLF,
+# and any tool that compares this repo against another byte-for-byte reports
+# every file as different. That is precisely what happened when comparing two
+# real theme repos: 49 files looked like they had diverged and were in fact
+# identical apart from line endings.
+#
+# Drift detection and content diffing both rely on byte comparison, so line
+# endings must be deterministic everywhere.
+* text=auto eol=lf
+
+# Binary assets — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.svg text eol=lf
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.mp4 binary
+*.webm binary

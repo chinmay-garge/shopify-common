@@ -1,0 +1,295 @@
+name: Content operations
+
+run-name: >-
+  ${{ github.event_name == 'issues' && format('{0} · issue #{1}', github.event.label.name, github.event.issue.number) || format('Content operations · {0}', inputs.site_key) }}
+
+# CONTENT lane. One workflow serves every site; the target site is parsed out of
+# the label that triggered it, so onboarding a new site means adding one case to
+# `resolve` plus its environment/vars — never a new workflow file.
+#
+#   refresh-<site>    rebuild that site's checklist issue from its templates
+#   show-diff-<site>  report Staging vs Prod differences (read-only)
+#   promote-<site>    ship the ticked templates to Prod (approval-gated)
+#
+# Each site's content lives in ITS OWN repo, which is git-connected to that
+# site's Staging theme — so the repo IS staging's content, and every job here
+# cross-checks-out that repo using ACCESS_PAT.
+
+on:
+  workflow_dispatch:
+    inputs:
+      site_key:
+        description: 'Site key to refresh (sb-a | sb-b | sb-c)'
+        required: true
+        type: choice
+        options: [sb-a, sb-b, sb-c]
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  resolve:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.event.label.name, 'refresh-') ||
+      startsWith(github.event.label.name, 'show-diff-') ||
+      startsWith(github.event.label.name, 'promote-')
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.r.outputs.action }}
+      site_key: ${{ steps.r.outputs.site_key }}
+      repo: ${{ steps.r.outputs.repo }}
+      env_name: ${{ steps.r.outputs.env_name }}
+    steps:
+      - id: r
+        env:
+          LABEL: ${{ github.event.label.name }}
+          MANUAL: ${{ inputs.site_key }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            action=refresh
+            site_key="$MANUAL"
+          else
+            case "$LABEL" in
+              refresh-*)   action=refresh; site_key="${LABEL#refresh-}" ;;
+              show-diff-*) action=diff;    site_key="${LABEL#show-diff-}" ;;
+              promote-*)   action=promote; site_key="${LABEL#promote-}" ;;
+              *) echo "::error::Unrecognised label '$LABEL'"; exit 1 ;;
+            esac
+          fi
+
+          case "$site_key" in
+            sb-a) repo=site-a; env_name=SITE-A ;;
+            sb-b) repo=site-b; env_name=SITE-B ;;
+            sb-c) repo=site-c; env_name=SITE-C ;;
+            *) echo "::error::Unknown site key '$site_key' (expected sb-a|sb-b|sb-c)"; exit 1 ;;
+          esac
+
+          {
+            echo "action=$action"
+            echo "site_key=$site_key"
+            echo "repo=$repo"
+            echo "env_name=$env_name"
+          } >> "$GITHUB_OUTPUT"
+          echo "action=$action site=$site_key repo=$repo env=$env_name"
+
+  refresh:
+    needs: resolve
+    if: needs.resolve.outputs.action == 'refresh'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: content-${{ needs.resolve.outputs.site_key }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: hub }
+
+      - uses: actions/checkout@v4
+        with:
+          repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
+          path: site
+          ref: main
+          token: ${{ secrets.ACCESS_PAT }}
+
+      - name: Build checklist body
+        run: node hub/scripts/gen-content-list.mjs --dir ./site/templates --site "$SITE_KEY" > body.md
+
+      - name: Upsert the checklist issue
+        run: |
+          LABEL="content-promotion-$SITE_KEY"
+          TITLE="Content promotion — $SITE_KEY"
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state open --json number -q '.[0].number')
+          if [ -z "$NUM" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file body.md
+          else
+            gh issue edit "$NUM" --repo "$GITHUB_REPOSITORY" --body-file body.md
+            echo "Updated issue #$NUM"
+          fi
+
+      - name: Remove the refresh label
+        if: github.event_name == 'issues'
+        run: |
+          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "refresh-$SITE_KEY"
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+            --body "Checklist rebuilt from \`$SITE_KEY\` templates. All ticks were reset."
+
+  diff:
+    needs: resolve
+    if: needs.resolve.outputs.action == 'diff'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.env_name }}
+    concurrency:
+      group: content-${{ needs.resolve.outputs.site_key }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: hub }
+
+      - uses: actions/checkout@v4
+        with:
+          repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
+          path: site
+          ref: main
+          token: ${{ secrets.ACCESS_PAT }}
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli
+
+      - name: Pull content templates from Prod
+        env:
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
+        run: |
+          mkdir -p prod
+          shopify theme pull \
+            --path ./prod \
+            --nodelete \
+            --only "templates/*.json" \
+            --theme ${{ vars.THEME_ID }} \
+            --store ${{ vars.STORE }}
+
+      - name: Compare and comment
+        run: |
+          node hub/scripts/gen-content-list.mjs \
+            --diff --staging ./site/templates --prod ./prod/templates --site "$SITE_KEY" > comment.md
+          cat comment.md
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file comment.md
+          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "show-diff-$SITE_KEY"
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+
+  collect:
+    needs: resolve
+    if: needs.resolve.outputs.action == 'promote'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      files: ${{ steps.c.outputs.files }}
+      empty: ${{ steps.c.outputs.empty }}
+    steps:
+      - id: c
+        env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          files=$(printf '%s\n' "$BODY" \
+            | grep -E '^[[:space:]]*- \[[xX]\]' \
+            | grep -oE 'templates/[A-Za-z0-9._/-]+\.json' \
+            | sort -u | paste -sd, -)
+          echo "Ticked: ${files:-<none>}"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+          if [ -z "$files" ]; then echo "empty=true" >> "$GITHUB_OUTPUT"; else echo "empty=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Tell the user nothing was ticked
+        if: steps.c.outputs.empty == 'true'
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+            --body "Nothing to promote — no templates were ticked. Tick one or more, then re-add the \`promote-${{ needs.resolve.outputs.site_key }}\` label."
+          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+            --remove-label "promote-${{ needs.resolve.outputs.site_key }}"
+          echo "### Nothing ticked — nothing promoted." >> "$GITHUB_STEP_SUMMARY"
+
+  approve:
+    needs: [resolve, collect]
+    if: needs.collect.outputs.empty == 'false'
+    runs-on: ubuntu-latest
+    environment: production-approval
+    steps:
+      - run: |
+          echo "Approved content promotion for ${{ needs.resolve.outputs.site_key }}"
+          echo "Files: ${{ needs.collect.outputs.files }}"
+
+  promote:
+    needs: [resolve, collect, approve]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.env_name }}
+    concurrency:
+      group: content-${{ needs.resolve.outputs.site_key }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+      FILES: ${{ needs.collect.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: hub }
+
+      - uses: actions/checkout@v4
+        with:
+          repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
+          path: site
+          ref: main
+          token: ${{ secrets.ACCESS_PAT }}
+          fetch-depth: 0
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli
+
+      - name: Snapshot current Prod content before overwriting
+        working-directory: site
+        env:
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
+        run: |
+          # Pull what is live NOW, commit it to a per-site snapshot branch, so a
+          # bad promotion can always be reverted to a known-good state.
+          mkdir -p ../prod-snapshot
+          shopify theme pull \
+            --path ../prod-snapshot \
+            --nodelete \
+            --only "templates/*.json" \
+            --theme ${{ vars.THEME_ID }} \
+            --store ${{ vars.STORE }}
+
+          BRANCH="content-snapshots-$SITE_KEY"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout -B "$BRANCH"
+          mkdir -p templates
+          cp -f ../prod-snapshot/templates/*.json templates/ 2>/dev/null || true
+          git add -A templates
+          git commit -m "Prod content snapshot before promotion (issue #${{ github.event.issue.number }})" || echo "Nothing to snapshot"
+          git push origin "$BRANCH" --force
+
+      - name: Build --only flags
+        run: |
+          echo "ONLY=$(printf '%s' "$FILES" | tr ',' '\n' | sed 's/^/--only /' | tr '\n' ' ')" >> "$GITHUB_ENV"
+
+      - name: Push ticked content to Prod
+        working-directory: site
+        env:
+          SHOPIFY_CLI_THEME_TOKEN: ${{ secrets.THEME_ACCESS_TOKEN }}
+        run: |
+          set -o pipefail
+          shopify theme push \
+            --allow-live \
+            --nodelete \
+            $ONLY \
+            --theme ${{ vars.THEME_ID }} \
+            --store ${{ vars.STORE }} 2>&1 | tee push.log
+          if grep -qi "with errors" push.log; then
+            echo "::error::Push reported errors — content was NOT shipped."
+            exit 1
+          fi
+
+      - name: Report success and reset the checklist
+        if: success()
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+            --body "Promoted to Production for **$SITE_KEY**: \`$FILES\`
+          Snapshot of the previous Prod content: \`content-snapshots-$SITE_KEY\` branch in \`${{ needs.resolve.outputs.repo }}\`."
+          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "promote-$SITE_KEY"
+          gh issue view ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --json body -q .body \
+            | sed -E 's/^([[:space:]]*- )\[[xX]\]/\1[ ]/' > reset.md
+          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file reset.md
+          echo "### Promoted \`$FILES\` to $SITE_KEY production" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report failure
+        if: failure()
+        run: |
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+            --body "Promotion FAILED for **$SITE_KEY** — nothing shipped. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          The \`promote-$SITE_KEY\` label was left in place; fix the cause, then remove and re-add it to retry."

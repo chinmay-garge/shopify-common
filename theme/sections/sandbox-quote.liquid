@@ -1,0 +1,41 @@
+{%- comment -%}
+  Sandbox section 3 of 10 — BASELINE (identical across all sites).
+{%- endcomment -%}
+
+{% liquid
+  assign s = section.settings
+%}
+
+<div class="sandbox-quote" style="padding: {{ s.padding_top }}px 20px {{ s.padding_bottom }}px; text-align: {{ s.alignment }};">
+  {%- if s.quote != blank -%}
+    <blockquote class="sandbox-quote__text">{{ s.quote }}</blockquote>
+  {%- endif -%}
+  {%- if s.attribution != blank -%}
+    <cite class="sandbox-quote__attribution">— {{ s.attribution }}</cite>
+  {%- endif -%}
+</div>
+
+{% schema %}
+{
+  "name": "t:sections.sandbox-quote.name",
+  "tag": "section",
+  "class": "sandbox-section",
+  "settings": [
+    { "type": "richtext", "id": "quote", "label": "t:sections.sandbox-quote.settings.quote", "default": "<p>A quote from the sandbox.</p>" },
+    { "type": "text", "id": "attribution", "label": "t:sections.sandbox-quote.settings.attribution" },
+    {
+      "type": "select",
+      "id": "alignment",
+      "label": "t:sections.sandbox-quote.settings.alignment",
+      "options": [
+        { "value": "left", "label": "t:sections.sandbox-quote.settings.alignment_options.left" },
+        { "value": "center", "label": "t:sections.sandbox-quote.settings.alignment_options.center" }
+      ],
+      "default": "center"
+    },
+    { "type": "range", "id": "padding_top", "min": 0, "max": 100, "step": 4, "unit": "px", "label": "t:sections.sandbox-quote.settings.padding_top", "default": 40 },
+    { "type": "range", "id": "padding_bottom", "min": 0, "max": 100, "step": 4, "unit": "px", "label": "t:sections.sandbox-quote.settings.padding_bottom", "default": 40 }
+  ],
+  "presets": [{ "name": "t:sections.sandbox-quote.name" }]
+}
+{% endschema %}
