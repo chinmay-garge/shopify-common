@@ -64,20 +64,24 @@ see notes.
 - [ ] **B4 — Content is not clobbered.** Edit `page.sandbox-content.json` in a
       Staging theme editor, run a code deploy, confirm the edit **survives**
       (this is what the ignore list buys).
-- [~] **B5 — Production needs approval.** The gate holds. Run status `waiting`,
-      `approve` job pending on `production-approval` with reviewer
-      `chinmay-garge`, and — the point — the `deploy` job never started, so
-      nothing reached the store. Awaiting a human approval to confirm the
-      resume path. **This is the control that could not be tested on the real
-      repo at all**, because creating the environment required admin there.
+- [x] **B5 — Production needs approval.** Confirmed in both directions.
+      *Held:* run status `waiting`, `approve` pending on `production-approval`,
+      and the `deploy` job never started — nothing reached the store.
+      *Resumed:* after a human approval, `approve` and `Deploy (SITE-A)` both
+      succeeded and the push landed on `Sandbox Prod` (`role: live`), proving the
+      `--allow-live` path.
+      **This is the control that could not be tested on the real repo at all**,
+      because creating the environment required admin there.
+      Re-confirmed on a release-triggered run, not just a manual one.
 - [ ] **B6 — Single approval covers all sites.** One approval releases the
       whole matrix. Needs more than one site installed.
-- [ ] **B7 — Backup artefact.** Each production run uploads
-      `backup-<site>-<run_id>` before overwriting.
-- [ ] **B8 — Rollback.** Re-run production against an older tag and confirm the
-      store returns to that state.
-- [ ] **B9 — Version stamping.** `release.sh` writes `theme_version`, and the
-      deployed theme reports it in the Shopify admin.
+- [x] **B7 — Backup artefact.** `backup-SITE-A-31624704580`, 596 KB, retained 90
+      days (expires 2026-11-10). Taken before the overwrite, so it is a genuine
+      rollback point rather than a record of what was just deployed.
+- [ ] **B8 — Rollback.** Both modes still to be exercised against a real deploy.
+- [x] **B9 — Version stamping.** `Cut a Release` bumped `theme_version` from
+      Dawn's `16.0.0` to `2026-08-12-1` on `main`, so the deployed theme is
+      identifiable in the Shopify admin.
 
 ## C. Drift detection
 
@@ -221,6 +225,11 @@ change is worth more than recovering from one.
       `GITHUB_TOKEN`, to prevent recursion. A release cut with the default token
       appears in the Releases tab and deploys **nothing** — a silent no-op.
       `release.yml` uses `ACCESS_PAT` for exactly this reason.
+      **Verified rather than assumed:** the release cut by the workflow produced
+      a `deploy-production` run with `event: release`, which then held at the
+      approval gate as intended. Had the default token been used, the only
+      symptom would have been a release that shipped nothing — with no error
+      anywhere to explain it.
 - [x] **I4 — Failed production deploys are visible.** Opens an issue naming the
       ref, the run, the backup artefact, and which rollback mode to use.
 - [x] **I5 — Weekly drift sweep.** Push-triggered detection cannot see drift
