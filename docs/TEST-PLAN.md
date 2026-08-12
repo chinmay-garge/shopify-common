@@ -109,6 +109,14 @@ see notes.
 
 ## D. Content promotion
 
+- [x] **D0 — Checklists refresh themselves.** Added after noticing the original
+      design relied on someone remembering to hit refresh. A content change in a
+      site repo now fires `repository_dispatch` to this repo, which rebuilds that
+      site's checklist. Verified twice: an edit to an existing page produced
+      `refresh · sb-a · content changed`, and **adding** `page.sandbox-new.json`
+      made "Sandbox New" appear in the checklist unprompted.
+      Worth stating plainly: a stale checklist is worse than no checklist,
+      because it looks authoritative while pointing at the wrong pages.
 - [x] **D1 — Refresh builds the checklist.** Manual dispatch for `sb-a` created
       issue #1 `Content promotion — sb-a` labelled `content-promotion-sb-a`,
       with all nine eligible templates listed as unticked boxes. Confirms the
@@ -170,6 +178,57 @@ all of this.
       rather than half-deploying.
 - [ ] **F4 — Full onboarding.** Environment, vars, token, labels, matrix entry
       — then deploy successfully.
+
+## H. Validation and guardrails
+
+Added after the first pass through A–F, on the principle that catching a bad
+change is worth more than recovering from one.
+
+- [x] **H1 — Theme check catches missing translations.** The significant find:
+      **Shopify's own `theme check` already detects this**, via
+      `ValidSchemaTranslations`. A bespoke checker was written first and then
+      deleted — the real gap was never a missing tool, it was that theme check
+      was never run in CI. It flagged all 5 `sandbox-promo` keys immediately,
+      and Dawn itself is clean (1417 keys, 96 files, zero missing), so no
+      baseline was needed.
+- [x] **H2 — Config must live inside `--path`.** `theme check` reads
+      `.theme-check.yml` from the directory it is checking, not the repo root.
+      Placed at the root it is silently ignored — errors stayed at 6 until the
+      file was moved to `theme/.theme-check.yml`.
+- [x] **H3 — Theme check also catches a skipped build.** It reported
+      `MissingAsset` for `global.vbt.css` / `global.vbt.js` when run without
+      building first, because those artefacts are gitignored. That makes it a
+      stronger guard than the hand-written "assert artefacts exist" step, and it
+      is why the check job builds first.
+- [x] **H4 — Locale-change guard fires on PRs.** A PR touching
+      `theme/locales/*.json` gets a comment explaining that merging and
+      deploying will **not** change any theme. Verified on a real PR. Posts once
+      per PR rather than once per push.
+- [x] **H5 — JSON validity.** Every `theme/**/*.json` is parsed, stripping the
+      `/* … */` banner Shopify prepends to some locale files.
+
+## I. Operations made self-service
+
+- [x] **I1 — Rollback is a form, not a runbook.** Two explicit modes:
+      `redeploy-tag` (code only) and `restore-backup` (code **and** content).
+      Conflating those two is how a rollback quietly destroys content edits, so
+      the distinction is in the input names and the summary. Snapshots current
+      state before acting, so a rollback is itself reversible.
+- [x] **I2 — Releases from the UI.** `Cut a Release` does what `release.sh` did,
+      without a terminal.
+- [x] **I3 — Release must be created with a PAT.** Subtle and easy to miss:
+      GitHub suppresses workflow triggers for events created with
+      `GITHUB_TOKEN`, to prevent recursion. A release cut with the default token
+      appears in the Releases tab and deploys **nothing** — a silent no-op.
+      `release.yml` uses `ACCESS_PAT` for exactly this reason.
+- [x] **I4 — Failed production deploys are visible.** Opens an issue naming the
+      ref, the run, the backup artefact, and which rollback mode to use.
+- [x] **I5 — Weekly drift sweep.** Push-triggered detection cannot see drift
+      introduced on the shared repo's side, since that produces no commit in the
+      site repo. A weekly cron closes that blind spot.
+- [x] **I6 — Human-readable site names.** Issue titles and comments now read
+      "Site A" rather than `sb-a`; the key survives only in label names, where it
+      is plumbing.
 
 ## G. Git hygiene
 

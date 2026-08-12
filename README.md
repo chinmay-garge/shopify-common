@@ -33,17 +33,92 @@ Every store: `Sandbox Prod` is live, `Sandbox Staging` is unpublished.
 | SITE-B | `site-b-store` | `158174281917` | `158174347453` |
 | SITE-C | `site-c-store` | `158780850276` | `158780883044` |
 
+## How do I…
+
+Start here. Everything below is a button or a label — none of it needs a
+terminal.
+
+### …change page content (text, images, section settings)
+
+1. Edit it in the **Shopify theme editor on the Staging theme**. Not in the live
+   theme, and not in GitHub.
+2. Your edit is committed to that site's repo automatically, and the promotion
+   checklist rebuilds itself.
+3. Open the issue titled **"Content promotion — Site A"** (or B / C).
+4. Optional but recommended: add the **`show-diff-sb-a`** label to see exactly
+   what differs from production. It only reports; it changes nothing.
+5. Tick the pages you want live, then add the **`promote-sb-a`** label.
+6. It waits for an approver. Once approved, only your ticked pages go live, and
+   the previous production content is saved to a snapshot branch first.
+
+If a promotion fails, nothing ships and your ticks are left alone — remove and
+re-add the label to retry.
+
+### …change code (a section's markup, styling, behaviour)
+
+Branch off `main`, open a PR into `staging`. Every PR runs **Validate**
+(theme check, build, JSON, locale reminder). Merging to `staging` deploys to all
+staging themes automatically.
+
+### …put code live
+
+Run **Cut a Release** from the Actions tab. Leave the fields blank to release
+what's on `staging` with an auto-generated version. It tags a release, which
+starts the production deploy — and that **waits for approval**, so cutting a
+release never ships anything on its own.
+
+### …undo something
+
+Run **Rollback - Production**. Pick the site and one of:
+
+- **`redeploy-tag`** — go back to an earlier release. Restores **code only**;
+  content is untouched. This is what you want for a bad code change.
+- **`restore-backup`** — restore the full snapshot taken before a given deploy.
+  Restores **code and content**, so content edits made since will be lost.
+
+Either way, the current state is backed up first — you can undo the undo.
+
+### …change wording in the theme editor UI (field labels, section names)
+
+This one has a trap. Edit `theme/locales/*.json`, then **run Sync Locales
+afterwards**. A normal deploy will succeed and still not change anything,
+because deploys ignore locale files on purpose. A PR touching those files gets
+an automatic comment reminding you.
+
 ## Workflows
 
-| Workflow | Trigger | Gate |
+In this repo:
+
+| Workflow | Runs when | Gate |
 |---|---|---|
-| `deploy-staging.yml` | push to `staging`, or manual | none — staging is cheap |
-| `deploy-production.yml` | release created, or manual | `production-approval` reviewer, before anything is pushed |
-| `content-operations.yml` | issue labels, or manual | `production-approval` on promote only |
-| `sync-locales.yml` | manual | only when targeting production |
+| **Validate** | every PR, and pushes to `main` / `staging` | — |
+| **Deploy – Staging** | push to `staging`, or manually | none — staging is cheap |
+| **Deploy – Production** | a release is created, or manually | ✅ approval before anything is pushed |
+| **Content operations** | an issue label is added; a site reports changed content; or manually | ✅ on promote |
+| **Sync Locales** | manually only | ✅ only when targeting production |
+| **Cut a Release** | manually | — (the deploy it triggers is gated) |
+| **Rollback – Production** | manually | ✅ |
+
+In each site repo:
+
+| Workflow | Runs when |
+|---|---|
+| **Drift Detection** | push to `main`, weekly, or manually |
+| **Notify content change** | content JSON changes on `main` |
 
 `deploy-production.yml` downloads each live theme and uploads it as a 90-day
-artefact **before** overwriting it, so there is always a rollback point.
+artefact **before** overwriting it, so there is always a rollback point. A failed
+production deploy opens an issue explaining how to recover.
+
+### Two things that are deliberately not automated
+
+**Approving production.** The gate exists to be a human decision.
+
+**Syncing locales.** It would be easy to make deploys push `locales/*.json`, and
+tempting — it would remove the trap described above. But translators edit those
+strings in the Shopify admin, and an automatic push would silently overwrite
+their work on every deploy. A visible extra step is the lesser evil; the PR
+comment exists to make it hard to forget.
 
 ### Why approval is its own job
 
