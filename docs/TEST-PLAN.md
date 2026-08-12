@@ -24,8 +24,16 @@ see notes.
       `theme/assets/global.vbt.css` and `global.vbt.js`.
 - [x] **A4 — Theme provisioning.** Staging + Prod themes created on all three
       stores via CLI; Prod published live, Dawn's original theme preserved.
-- [ ] **A5 — Theme Access tokens work in CI.** Pending valid tokens; the first
-      batch returned 401 from both the CLI and the raw Admin API.
+- [!] **A5 — Theme Access tokens work in CI.** Blocked. Two separate batches of
+      `shptka_…` tokens returned 401 from both the Shopify CLI and a raw Admin
+      API call, on all three stores. Store handles are confirmed correct (they
+      resolve and redirect to `/password`), so this is the token, not the store.
+      Browser OAuth (`shopify auth login`) works and covers local CLI use, but
+      GitHub Actions cannot use it — so every deploy/diff/promote test remains
+      blocked until valid tokens exist.
+- [x] **A6 — `ACCESS_PAT` cross-repo checkout works.** A classic PAT with `repo`
+      scope reads all four repos; both `drift-detection` and
+      `content-operations` successfully check out a second repo with it.
 
 ## B. Code deploys
 
@@ -52,15 +60,26 @@ see notes.
 
 ## C. Drift detection
 
-- [ ] **C1 — Divergent file flagged.** `site-b`'s `sandbox-banner.liquid`
-      raises a drift issue naming that file.
-- [ ] **C2 — Site-unique file flagged.** `site-a`'s `sandbox-table.liquid` is
-      reported as present locally but absent from the shared repo.
-- [ ] **C3 — No duplicate issues.** A second push updates the existing issue
-      instead of opening another.
+- [x] **C1 — Divergent file flagged.** Both divergence fixtures were reported
+      as differing, and only those:
+      `Files shared/theme/sections/sandbox-banner.liquid and site/sections/sandbox-banner.liquid differ` (site-b),
+      `…sandbox-footer-cta.liquid… differ` (site-c).
+- [x] **C2 — Site-unique file flagged.** `Only in site/sections: sandbox-table.liquid`
+      and `Only in site/snippets: sandbox-table-cell.liquid` (site-a);
+      `Only in site/sections: sandbox-steps.liquid` (site-b). The snippet being
+      caught alongside its section is the important part — that is the
+      dependency people forget when porting.
+- [x] **C3 — No duplicate issues.** A second run left exactly one open issue and
+      added a "Drift still present as of \<sha\>" comment. Worth keeping: the
+      naive version opens a fresh issue every push, and since these repos also
+      receive a commit for every content edit made in the Shopify admin, that
+      buries real drift under noise.
 - [ ] **C4 — Auto-close.** Once drift is resolved the issue closes itself.
-- [ ] **C5 — Exclusions hold.** Content JSON edits and `.vbt.` build output do
-      **not** trigger drift.
+      Pending — will be exercised by F1, which resolves site-a's drift.
+- [x] **C5 — Exclusions hold.** Strong result: across 300+ files per repo —
+      all of Dawn, content JSON on both sides, and `.vbt.` build assets present
+      in the site repos but gitignored in common — exactly the five intended
+      fixtures were flagged and nothing else. Zero false positives.
 - [ ] **C6 — Common wins.** After a code deploy, `site-b`'s banner marker flips
       from `SITE-B-VERSION` to `COMMON-VERSION`, and `site-c` loses its extra
       `hide_background` setting.
@@ -69,10 +88,16 @@ see notes.
 
 ## D. Content promotion
 
-- [ ] **D1 — Refresh builds the checklist.** `refresh-sb-a` creates the issue
-      with the eligible templates listed, and removes its own label.
-- [ ] **D2 — Eligibility is conservative.** `product.json` / `collection.json`
-      are absent from the checklist; page templates and singletons are present.
+- [x] **D1 — Refresh builds the checklist.** Manual dispatch for `sb-a` created
+      issue #1 `Content promotion — sb-a` labelled `content-promotion-sb-a`,
+      with all nine eligible templates listed as unticked boxes. Confirms the
+      cross-repo read: the list came from `site-a`'s templates, not this repo's.
+- [x] **D2 — Eligibility is conservative.** `product.json`, `collection.json`,
+      `blog.json`, `article.json`, `list-collections.json` and `gift_card.liquid`
+      all exist in `site-a` and were all correctly excluded; only page templates
+      and the five singletons appeared. This matters because promoting
+      `product.json` would change every product page at once — a decision that
+      should never be one tick in a checklist.
 - [ ] **D3 — Diff is accurate.** After editing content on Staging,
       `show-diff-sb-a` reports changed / staging-only / prod-only correctly.
 - [ ] **D4 — Line endings are not false positives.** A CRLF-vs-LF difference
@@ -135,3 +160,5 @@ Recorded as they come up, with the process change each one implies.
 |---|---|---|
 | 1 | Free plan blocks `required_reviewers` on private repos (A2) | Verify plan/visibility before promising an approval gate |
 | 2 | Theme Access tokens from the app UI can be unusable; the emailed value is authoritative (A5) | Onboarding runbook must say "use the emailed password" |
+| 3 | `gh` fails with `fatal: not a git repository` when both checkouts use `path:`, because the workspace root is not a repo | Every `gh` call in a multi-checkout workflow must pass `--repo "$GITHUB_REPOSITORY"`. Caught only by running it — the workflow was valid YAML and the diff steps passed. |
+| 4 | Line endings must be pinned repo-wide | Added `.gitattributes` with `* text=auto eol=lf` to all four repos. Without it a Windows checkout rewrites text to CRLF and byte-comparison reports every file as changed — the same effect that made 49 identical real files look diverged. Drift detection and content diffing both depend on byte equality. |
