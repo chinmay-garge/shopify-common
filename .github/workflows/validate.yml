@@ -33,6 +33,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      # Must build before checking. Built assets are gitignored, and
+      # layout/theme.liquid references global.vbt.css / global.vbt.js — without
+      # the build, theme check correctly reports MissingAsset for both.
+      #
+      # That is a useful property rather than an annoyance: it means theme check
+      # independently catches a deploy that skipped the build, without us having
+      # to hand-roll that assertion.
+      - name: Build
+        run: npm run build
+
       - name: Install Shopify CLI
         run: npm install -g @shopify/cli
 
