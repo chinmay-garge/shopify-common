@@ -1,0 +1,206 @@
+name: Rollback - Production
+
+# Rollback used to be a runbook paragraph ("re-run production against an older
+# tag"), which is exactly the wrong shape for something you reach for while
+# something is broken. This makes it a form.
+#
+# Two modes, and the difference matters:
+#
+#   redeploy-tag     Rebuilds and pushes CODE from an earlier tag/branch/SHA.
+#                    Leaves content (templates, settings, locales) untouched.
+#                    Use when a code change broke something.
+#
+#   restore-backup   Pushes a full theme snapshot taken before an earlier
+#                    production deploy, which includes CONTENT. This will
+#                    overwrite content edits made since that snapshot.
+#                    Use when a deploy damaged content, or as a last resort.
+#
+# Both are approval-gated, because both write to a live theme.
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: 'Site to roll back'
+        type: choice
+        required: true
+        options: [SITE-A, SITE-B, SITE-C]
+      mode:
+        description: 'How to roll back'
+        type: choice
+        required: true
+        default: redeploy-tag
+        options: [redeploy-tag, restore-backup]
+      ref:
+        description: 'redeploy-tag: the tag / branch / SHA to deploy'
+        type: string
+        required: false
+      backup_run_id:
+        description: 'restore-backup: the run ID whose backup artefact to restore'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check-inputs:
+    name: Check inputs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate the mode has what it needs
+        run: |
+          MODE='${{ inputs.mode }}'
+          REF='${{ inputs.ref }}'
+          RUN_ID='${{ inputs.backup_run_id }}'
+
+          if [ "$MODE" = "redeploy-tag" ] && [ -z "$REF" ]; then
+            echo "::error::mode=redeploy-tag requires 'ref' (a tag, branch, or SHA)."
+            exit 1
+          fi
+          if [ "$MODE" = "restore-backup" ] && [ -z "$RUN_ID" ]; then
+            echo "::error::mode=restore-backup requires 'backup_run_id'. Find it on the Deploy - Production run whose backup you want."
+            exit 1
+          fi
+
+          {
+            echo "## Rollback plan"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Site | \`${{ inputs.site }}\` |"
+            echo "| Mode | \`$MODE\` |"
+            if [ "$MODE" = "redeploy-tag" ]; then
+              echo "| Ref | \`$REF\` |"
+              echo ""
+              echo "Restores **code only**. Content is left as-is."
+            else
+              echo "| Backup run | \`$RUN_ID\` |"
+              echo ""
+              echo "Restores **code and content**. Content edits made after that"
+              echo "backup was taken will be overwritten."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  approve:
+    name: Approve rollback
+    needs: check-inputs
+    runs-on: ubuntu-latest
+    environment: production-approval
+    steps:
+      - run: echo "Approved ${{ inputs.mode }} rollback of ${{ inputs.site }}"
+
+  rollback:
+    name: Roll back ${{ inputs.site }}
+    needs: [check-inputs, approve]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.site }}
+    steps:
+      # Check out the requested ref for redeploy-tag; for restore-backup the ref
+      # is irrelevant, so default to the current branch just to get the action.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.mode == 'redeploy-tag' && inputs.ref || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli
+
+      - name: Get Shopify access token
+        uses: ./.github/actions/shopify-token
+        with:
+          store: ${{ vars.STORE }}
+          client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
+          client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
+
+      # Always snapshot the CURRENT state first. Rolling back is itself a change
+      # that can be wrong, and without this there is no way back from a rollback.
+      - name: Back up the current live theme first
+        run: |
+          mkdir -p ./pre-rollback
+          shopify theme pull \
+            --path ./pre-rollback \
+            --theme ${{ vars.THEME_ID }} \
+            --store ${{ vars.STORE }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pre-rollback-${{ inputs.site }}-${{ github.run_id }}
+          path: ./pre-rollback/
+          retention-days: 90
+
+      # --- mode: redeploy an earlier ref (code only) ---------------------
+      - name: Install dependencies
+        if: inputs.mode == 'redeploy-tag'
+        run: npm ci || npm install
+
+      - name: Build
+        if: inputs.mode == 'redeploy-tag'
+        run: npm run build
+
+      - name: Push code from ${{ inputs.ref }}
+        if: inputs.mode == 'redeploy-tag'
+        run: |
+          set -o pipefail
+          shopify theme push -j \
+            --allow-live \
+            --path theme/ \
+            --ignore "src/*" \
+            --ignore ".theme-check.yml" \
+            --ignore package.json \
+            --ignore config/settings_data.json \
+            --ignore "locales/*.json" \
+            --ignore "sections/*.json" \
+            --ignore "templates/*.json" \
+            --ignore "templates/customers/*.json" \
+            --theme ${{ vars.THEME_ID }} \
+            --store ${{ vars.STORE }} | tee push-result.json
+
+      # --- mode: restore a backup artefact (code + content) -------------
+      - name: Download the backup artefact
+        if: inputs.mode == 'restore-backup'
+        uses: actions/download-artifact@v4
+        with:
+          name: backup-${{ inputs.site }}-${{ inputs.backup_run_id }}
+          path: ./restore
+          run-id: ${{ inputs.backup_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Push the restored snapshot
+        if: inputs.mode == 'restore-backup'
+        run: |
+          set -o pipefail
+          if [ ! -d ./restore ] || [ -z "$(ls -A ./restore)" ]; then
+            echo "::error::Backup artefact was empty — nothing to restore."
+            exit 1
+          fi
+          # No ignore list here: restoring a snapshot deliberately includes the
+          # content that was live at the time.
+          shopify theme push -j \
+            --allow-live \
+            --path ./restore \
+            --theme ${{ vars.THEME_ID }} \
+            --store ${{ vars.STORE }} | tee push-result.json
+
+      - name: Write summary
+        if: always()
+        run: |
+          {
+            echo "### Rollback of ${{ inputs.site }} (${{ inputs.mode }})"
+            if [ -s push-result.json ]; then
+              echo "- Theme: $(jq -r '.theme.name' push-result.json) (#$(jq -r '.theme.id' push-result.json))"
+            else
+              echo "- Push produced no output — check the log above."
+            fi
+            echo "- State before this rollback: \`pre-rollback-${{ inputs.site }}-${{ github.run_id }}\`"
+            if [ "${{ inputs.mode }}" = "redeploy-tag" ]; then
+              echo ""
+              echo "_Code only. If the problem was content, re-run with mode \`restore-backup\`._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

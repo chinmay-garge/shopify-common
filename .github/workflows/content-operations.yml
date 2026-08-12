@@ -51,6 +51,7 @@ jobs:
       site_key: ${{ steps.r.outputs.site_key }}
       repo: ${{ steps.r.outputs.repo }}
       env_name: ${{ steps.r.outputs.env_name }}
+      display: ${{ steps.r.outputs.display }}
     steps:
       - id: r
         env:
@@ -78,10 +79,12 @@ jobs:
             esac
           fi
 
+          # `display` is what a content editor reads. Site keys like "sb-a" are
+          # plumbing — they belong in labels, not in anything human-facing.
           case "$site_key" in
-            sb-a) repo=site-a; env_name=SITE-A ;;
-            sb-b) repo=site-b; env_name=SITE-B ;;
-            sb-c) repo=site-c; env_name=SITE-C ;;
+            sb-a) repo=site-a; env_name=SITE-A; display="Site A" ;;
+            sb-b) repo=site-b; env_name=SITE-B; display="Site B" ;;
+            sb-c) repo=site-c; env_name=SITE-C; display="Site C" ;;
             *) echo "::error::Unknown site key '$site_key' (expected sb-a|sb-b|sb-c)"; exit 1 ;;
           esac
 
@@ -90,8 +93,9 @@ jobs:
             echo "site_key=$site_key"
             echo "repo=$repo"
             echo "env_name=$env_name"
+            echo "display=$display"
           } >> "$GITHUB_OUTPUT"
-          echo "action=$action site=$site_key repo=$repo env=$env_name"
+          echo "action=$action site=$site_key ($display) repo=$repo env=$env_name"
 
   refresh:
     needs: resolve
@@ -117,9 +121,11 @@ jobs:
         run: node hub/scripts/gen-content-list.mjs --dir ./site/templates --site "$SITE_KEY" > body.md
 
       - name: Upsert the checklist issue
+        env:
+          DISPLAY: ${{ needs.resolve.outputs.display }}
         run: |
           LABEL="content-promotion-$SITE_KEY"
-          TITLE="Content promotion — $SITE_KEY"
+          TITLE="Content promotion — $DISPLAY"
           NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state open --json number -q '.[0].number')
           if [ -z "$NUM" ]; then
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file body.md
@@ -238,6 +244,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+      DISPLAY: ${{ needs.resolve.outputs.display }}
       FILES: ${{ needs.collect.outputs.files }}
     steps:
       - uses: actions/checkout@v4
@@ -307,8 +314,13 @@ jobs:
         if: success()
         run: |
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --body "Promoted to Production for **$SITE_KEY**: \`$FILES\`
-          Snapshot of the previous Prod content: \`content-snapshots-$SITE_KEY\` branch in \`${{ needs.resolve.outputs.repo }}\`."
+            --body "**Promoted to Production — $DISPLAY**
+
+          Shipped: \`$FILES\`
+
+          The previous Prod content was snapshotted first, to the \`content-snapshots-$SITE_KEY\` branch in \`${{ needs.resolve.outputs.repo }}\` — that is the way back if this was wrong.
+
+          All ticks have been cleared, ready for the next batch."
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "promote-$SITE_KEY"
           gh issue view ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --json body -q .body \
             | sed -E 's/^([[:space:]]*- )\[[xX]\]/\1[ ]/' > reset.md
@@ -319,5 +331,10 @@ jobs:
         if: failure()
         run: |
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --body "Promotion FAILED for **$SITE_KEY** — nothing shipped. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          The \`promote-$SITE_KEY\` label was left in place; fix the cause, then remove and re-add it to retry."
+            --body "**Promotion failed — $DISPLAY. Nothing was shipped.**
+
+          Your ticks have been left exactly as they were, and the \`promote-$SITE_KEY\` label is still on this issue.
+
+          To retry: remove the \`promote-$SITE_KEY\` label and add it again.
+
+          If it keeps failing, the details are here: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
