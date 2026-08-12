@@ -1,0 +1,30 @@
+# Shopify Theme Check configuration.
+#
+# The rule that matters most here is ValidSchemaTranslations. A section schema
+# referencing a `t:` key that does not exist in locales/en.default.schema.json
+# does not raise a Shopify error — the theme editor silently renders
+# "missing translation: t:sections.foo.name" instead of the section name.
+#
+# That exact bug reached a live store: a section was ported between repos
+# without its locale keys, and was only caught by a human opening the section
+# picker. Theme Check detects it in seconds, so it runs on every PR.
+
+extends: theme-check:recommended
+
+# Dawn ships a number of warnings (orphaned snippets, etc.) that are not worth
+# blocking on. Errors block; warnings are reported and ignored.
+# The workflow enforces this via `--fail-level error`.
+
+ValidSchemaTranslations:
+  enabled: true
+  ignore:
+    # Deliberately unlocalised. This is the permanent regression fixture for the
+    # missing-translation bug — its t: keys are absent on purpose so the failure
+    # stays reproducible in the theme editor. Do NOT add its keys to the locale
+    # file. See docs/TEST-PLAN.md (E1-E3).
+    - sections/sandbox-promo.liquid
+
+TranslationKeyExists:
+  enabled: true
+  ignore:
+    - sections/sandbox-promo.liquid

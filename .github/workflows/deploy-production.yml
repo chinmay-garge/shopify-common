@@ -118,6 +118,7 @@ jobs:
             --allow-live \
             --path theme/ \
             --ignore "src/*" \
+            --ignore ".theme-check.yml" \
             --ignore package.json \
             --ignore config/settings_data.json \
             --ignore "locales/*.json" \

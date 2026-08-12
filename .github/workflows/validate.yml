@@ -1,0 +1,150 @@
+name: Validate
+
+# Runs on every PR and on pushes to the long-lived branches. Nothing here talks
+# to Shopify, so it needs no credentials and is safe on forks.
+#
+# Each job guards a failure mode that has actually bitten this kind of setup:
+#
+#   theme-check  - a schema referencing a missing t: key renders
+#                  "missing translation: …" in the theme editor. Shopify does not
+#                  error on it, and no deploy catches it. This reached a live
+#                  store once; it is the reason this workflow exists.
+#   build        - deploys assert build artefacts exist, but by then the code is
+#                  already merged. Failing here means a broken build never lands.
+#   json         - a malformed template JSON is otherwise only found at push time.
+#   locale-guard - the subtle one: locale changes deploy successfully and still
+#                  do not reach the theme, because deploys ignore locales/*.json.
+#                  Reminds the author, since a green deploy is not proof.
+
+on:
+  pull_request:
+  push:
+    branches: [main, staging]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  theme-check:
+    name: Theme check (Liquid + translations)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Shopify CLI
+        run: npm install -g @shopify/cli
+
+      - name: Run theme check
+        run: |
+          # Config lives at theme/.theme-check.yml — theme check reads it from
+          # the --path directory, not the repo root.
+          # Warnings are reported; only errors fail the job.
+          shopify theme check --path ./theme --fail-level error
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Assert build artefacts exist
+        run: |
+          for f in theme/assets/global.vbt.css theme/assets/global.vbt.js; do
+            if [ ! -s "$f" ]; then
+              echo "::error::Build produced no $f — the deploy would ship a theme with no CSS/JS."
+              exit 1
+            fi
+            echo "$f ($(wc -c < "$f") bytes)"
+          done
+
+  json:
+    name: JSON is parseable
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate every JSON file in theme/
+        run: |
+          # Shopify prepends a /* … */ banner to some locale files, which is not
+          # valid JSON — strip it before parsing.
+          fail=0
+          while IFS= read -r f; do
+            if ! node -e "
+              const fs=require('fs');
+              const raw=fs.readFileSync(process.argv[1],'utf8');
+              JSON.parse(raw.replace(/^\s*\/\*[\s\S]*?\*\//,''));
+            " "$f" 2>/dev/null; then
+              echo "::error file=$f::Invalid JSON"
+              fail=1
+            fi
+          done < <(find theme -name '*.json' -type f)
+          if [ "$fail" -eq 0 ]; then echo "All JSON files parsed cleanly."; fi
+          exit "$fail"
+
+  locale-guard:
+    name: Locale change reminder
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Warn if locales changed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed=$(git diff --name-only "$BASE" "$HEAD" -- 'theme/locales/*.json' || true)
+          if [ -z "$changed" ]; then
+            echo "No locale files changed — nothing to flag."
+            exit 0
+          fi
+
+          echo "Locale files changed:"
+          echo "$changed"
+          echo "::warning::This PR changes locale files. Merging and deploying will NOT put them on any theme — deploys ignore locales/*.json. Run the 'Sync Locales' workflow afterwards."
+
+          {
+            echo "### Locale files changed — one extra step needed"
+            echo ""
+            echo "This PR touches:"
+            echo ""
+            echo '```'
+            echo "$changed"
+            echo '```'
+            echo ""
+            echo "Both deploy workflows **ignore \`locales/*.json\`** on purpose, so that"
+            echo "translators' edits in the Shopify admin are never overwritten."
+            echo ""
+            echo "The consequence: **merging and deploying this PR will not put these"
+            echo "strings on any theme.** The deploy will pass, and the theme will still"
+            echo "show the old values."
+            echo ""
+            echo "After this merges, run **Sync Locales** for the affected site(s)."
+          } > comment.md
+
+          # Update a single marker comment rather than adding one per push.
+          marker="<!-- locale-guard -->"
+          printf '%s\n' "$marker" >> comment.md
+          existing=$(gh pr view ${{ github.event.pull_request.number }} --repo "$GITHUB_REPOSITORY" \
+            --json comments -q ".comments[] | select(.body | contains(\"$marker\")) | .url" | head -1)
+          if [ -n "$existing" ]; then
+            echo "Reminder already posted; leaving it in place."
+          else
+            gh pr comment ${{ github.event.pull_request.number }} --repo "$GITHUB_REPOSITORY" --body-file comment.md
+          fi
