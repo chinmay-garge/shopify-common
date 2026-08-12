@@ -1,7 +1,9 @@
 name: Content operations
 
 run-name: >-
-  ${{ github.event_name == 'issues' && format('{0} · issue #{1}', github.event.label.name, github.event.issue.number) || format('Content operations · {0}', inputs.site_key) }}
+  ${{ github.event_name == 'issues' && format('{0} · issue #{1}', github.event.label.name, github.event.issue.number)
+   || github.event_name == 'repository_dispatch' && format('refresh · {0} · content changed', github.event.client_payload.site_key)
+   || format('refresh · {0} · manual', inputs.site_key) }}
 
 # CONTENT lane. One workflow serves every site; the target site is parsed out of
 # the label that triggered it, so onboarding a new site means adding one case to
@@ -25,6 +27,11 @@ on:
         options: [sb-a, sb-b, sb-c]
   issues:
     types: [labeled]
+  # Sent by a site repo when its content changes, so the checklist never goes
+  # stale. Without this, an editor can tick a list that no longer matches the
+  # store and promote the wrong thing.
+  repository_dispatch:
+    types: [content-changed]
 
 permissions:
   issues: write
@@ -34,6 +41,7 @@ jobs:
   resolve:
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'repository_dispatch' ||
       startsWith(github.event.label.name, 'refresh-') ||
       startsWith(github.event.label.name, 'show-diff-') ||
       startsWith(github.event.label.name, 'promote-')
@@ -48,10 +56,19 @@ jobs:
         env:
           LABEL: ${{ github.event.label.name }}
           MANUAL: ${{ inputs.site_key }}
+          DISPATCHED: ${{ github.event.client_payload.site_key }}
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             action=refresh
             site_key="$MANUAL"
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            # A site repo told us its content changed.
+            action=refresh
+            site_key="$DISPATCHED"
+            if [ -z "$site_key" ]; then
+              echo "::error::repository_dispatch received without client_payload.site_key"
+              exit 1
+            fi
           else
             case "$LABEL" in
               refresh-*)   action=refresh; site_key="${LABEL#refresh-}" ;;
