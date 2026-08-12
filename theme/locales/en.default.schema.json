@@ -3398,7 +3398,7 @@
       }
     },
     "sandbox-hero": {
-      "name": "Sandbox Hero",
+      "name": "Sandbox Hero (locale probe)",
       "settings": {
         "eyebrow": "Eyebrow",
         "heading": "Heading",
