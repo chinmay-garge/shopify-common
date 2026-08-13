@@ -24,6 +24,10 @@ const flag = (name, fallback = null) => {
 const has = (name) => argv.includes(`--${name}`);
 
 const SITE = flag('site', '<site>');
+// Labels read "site-a: promote" etc — the colon groups them in GitHub's label
+// picker so Site A's labels cluster together, separate from Site B's / Site
+// C's. Falls back to SITE for callers that have not been updated to pass it.
+const LABEL_PREFIX = flag('label-prefix', SITE);
 const SINGLETONS = new Set(['index.json', 'cart.json', 'search.json', '404.json', 'password.json']);
 const isPage = (f) => /^page(\..+)?\.json$/.test(f);
 const eligible = (f) => isPage(f) || SINGLETONS.has(f);
@@ -137,9 +141,9 @@ const lines = found
   .map((r) => `- [ ] ${r.name} — \`${r.p}\``);
 
 let out = '';
-out += `Tick the template(s) to promote to **Production**, then add the **\`promote-${SITE}\`** label.\n\n`;
-out += `- Need the newest list? Add **\`refresh-${SITE}\`** — it rebuilds this body and removes itself.\n`;
-out += `- Want to see what actually differs first? Add **\`show-diff-${SITE}\`** (read-only).\n\n`;
+out += `Tick the template(s) to promote to **Production**, then add the **\`${LABEL_PREFIX}: promote\`** label.\n\n`;
+out += `- Need the newest list? Add **\`${LABEL_PREFIX}: refresh\`** — it rebuilds this body and removes itself.\n`;
+out += `- Want to see what actually differs first? Add **\`${LABEL_PREFIX}: show-diff\`** (read-only).\n\n`;
 out += `_Auto-generated from \`${SITE}\`'s repo, which is git-connected to its Staging theme — so this repo **is** Staging's content. Do not edit the list by hand; refreshing resets all ticks._\n\n`;
 out += '<!-- CONTENT-LIST:START -->\n';
 out += '### Templates\n';

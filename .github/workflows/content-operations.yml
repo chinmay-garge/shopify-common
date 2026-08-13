@@ -48,6 +48,13 @@ on:
         required: true
         type: choice
         options: [sb-a, sb-b, sb-c]
+  # Label names are `site-a: refresh` / `site-a: show-diff` / `site-a: promote`
+  # (and site-b / site-c). The colon-prefix groups them visually in GitHub's
+  # label picker, so Site A's labels cluster together and are not easily
+  # confused with Site B's or Site C's — labels are repo-wide in GitHub, so
+  # true isolation between sites is not possible, this is the closest fix.
+  # `site-a: checklist` (no dash-suffix) is a permanent tag on the issue, not
+  # an action, and deliberately does not match this trigger.
   issues:
     types: [labeled]
   # Sent by a site repo when its content changes, so the checklist never goes
@@ -67,12 +74,13 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'repository_dispatch' ||
-      startsWith(github.event.label.name, 'refresh-') ||
-      startsWith(github.event.label.name, 'show-diff-') ||
-      startsWith(github.event.label.name, 'promote-')
+      contains(github.event.label.name, ': refresh') ||
+      contains(github.event.label.name, ': show-diff') ||
+      contains(github.event.label.name, ': promote')
     outputs:
       action: ${{ steps.r.outputs.action }}
       site_key: ${{ steps.r.outputs.site_key }}
+      label_prefix: ${{ steps.r.outputs.label_prefix }}
       repo: ${{ steps.r.outputs.repo }}
       env_name: ${{ steps.r.outputs.env_name }}
       display: ${{ steps.r.outputs.display }}
@@ -101,10 +109,21 @@ jobs:
               exit 1
             fi
           else
+            # Labels read "site-a: refresh", "site-b: promote", etc. Matched
+            # explicitly (9 cases) rather than by stripping a prefix — a colon
+            # and a space inside a label name make shell prefix-stripping
+            # (${LABEL#refresh-}) unreliable, and explicit cases are easier to
+            # audit anyway.
             case "$LABEL" in
-              refresh-*)   action=refresh; site_key="${LABEL#refresh-}" ;;
-              show-diff-*) action=diff;    site_key="${LABEL#show-diff-}" ;;
-              promote-*)   action=promote; site_key="${LABEL#promote-}" ;;
+              "site-a: refresh")   action=refresh; site_key=sb-a ;;
+              "site-a: show-diff") action=diff;    site_key=sb-a ;;
+              "site-a: promote")   action=promote; site_key=sb-a ;;
+              "site-b: refresh")   action=refresh; site_key=sb-b ;;
+              "site-b: show-diff") action=diff;    site_key=sb-b ;;
+              "site-b: promote")   action=promote; site_key=sb-b ;;
+              "site-c: refresh")   action=refresh; site_key=sb-c ;;
+              "site-c: show-diff") action=diff;    site_key=sb-c ;;
+              "site-c: promote")   action=promote; site_key=sb-c ;;
               *) echo "::error::Unrecognised label '$LABEL'"; exit 1 ;;
             esac
           fi
@@ -118,9 +137,14 @@ jobs:
             *) echo "::error::Unknown site key '$site_key' (expected sb-a|sb-b|sb-c)"; exit 1 ;;
           esac
 
+          # label_prefix is the part before the colon, e.g. "site-a" — reused
+          # everywhere a label needs to be added, removed, or mentioned in text.
+          label_prefix="site-${site_key#sb-}"
+
           {
             echo "action=$action"
             echo "site_key=$site_key"
+            echo "label_prefix=$label_prefix"
             echo "repo=$repo"
             echo "env_name=$env_name"
             echo "display=$display"
@@ -137,6 +161,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+      LABEL_PREFIX: ${{ needs.resolve.outputs.label_prefix }}
     steps:
       - uses: actions/checkout@v4
         with: { path: hub }
@@ -151,13 +176,13 @@ jobs:
           token: ${{ secrets.ACCESS_PAT }}
 
       - name: Build checklist body
-        run: node hub/scripts/gen-content-list.mjs --dir ./site/templates --site "$SITE_KEY" > body.md
+        run: node hub/scripts/gen-content-list.mjs --dir ./site/templates --site "$SITE_KEY" --label-prefix "$LABEL_PREFIX" > body.md
 
       - name: Upsert the checklist issue
         env:
           DISPLAY: ${{ needs.resolve.outputs.display }}
         run: |
-          LABEL="content-promotion-$SITE_KEY"
+          LABEL="$LABEL_PREFIX: checklist"
           TITLE="Content promotion — $DISPLAY"
           NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state open --json number -q '.[0].number')
           if [ -z "$NUM" ]; then
@@ -170,7 +195,7 @@ jobs:
       - name: Remove the refresh label
         if: github.event_name == 'issues'
         run: |
-          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "refresh-$SITE_KEY"
+          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "$LABEL_PREFIX: refresh"
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
             --body "Checklist rebuilt from the staging theme's content. All ticks were reset."
 
@@ -195,6 +220,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+      LABEL_PREFIX: ${{ needs.resolve.outputs.label_prefix }}
       DISPLAY: ${{ needs.resolve.outputs.display }}
     steps:
       - uses: actions/checkout@v4
@@ -206,7 +232,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "content-promotion-$SITE_KEY" --state open --json number -q '.[0].number')
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL_PREFIX: checklist" --state open --json number -q '.[0].number')
           if [ -z "$NUM" ]; then
             echo "::error::No open checklist issue found for $SITE_KEY yet — refresh should have created one."
             exit 1
@@ -261,8 +287,8 @@ jobs:
           } > comment.md
 
           gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file comment.md
-          # Only the manual show-diff-* path carries this label to remove.
-          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label "show-diff-$SITE_KEY" 2>/dev/null || true
+          # Only the manual "site-x: show-diff" path carries this label to remove.
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label "$LABEL_PREFIX: show-diff" 2>/dev/null || true
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
 
   collect:
@@ -290,11 +316,13 @@ jobs:
 
       - name: Tell the user nothing was ticked
         if: steps.c.outputs.empty == 'true'
+        env:
+          LABEL_PREFIX: ${{ needs.resolve.outputs.label_prefix }}
         run: |
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --body "Nothing to promote — no pages were ticked. Tick one or more, then re-add the \`promote-${{ needs.resolve.outputs.site_key }}\` label."
+            --body "Nothing to promote — no pages were ticked. Tick one or more, then re-add the \`$LABEL_PREFIX: promote\` label."
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --remove-label "promote-${{ needs.resolve.outputs.site_key }}"
+            --remove-label "$LABEL_PREFIX: promote"
           echo "### Nothing ticked — nothing promoted." >> "$GITHUB_STEP_SUMMARY"
 
   approve:
@@ -320,6 +348,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+      LABEL_PREFIX: ${{ needs.resolve.outputs.label_prefix }}
       DISPLAY: ${{ needs.resolve.outputs.display }}
       FILES: ${{ needs.collect.outputs.files }}
     steps:
@@ -445,7 +474,7 @@ jobs:
           Ticks cleared, ready for the next batch."
           fi
 
-          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "promote-$SITE_KEY"
+          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "$LABEL_PREFIX: promote"
           gh issue view ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --json body -q .body \
             | sed -E 's/^([[:space:]]*- )\[[xX]\]/\1[ ]/' > reset.md
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file reset.md
@@ -456,6 +485,6 @@ jobs:
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
             --body "**Promotion failed — $DISPLAY. Your ticks have been left alone.**
 
-          To retry: remove the \`promote-$SITE_KEY\` label and add it again.
+          To retry: remove the \`$LABEL_PREFIX: promote\` label and add it again.
 
           Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
