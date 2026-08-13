@@ -1,0 +1,219 @@
+<title>Content &amp; Code Pipeline — One Site's Mechanism</title>
+
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1a1a;
+    --muted: #6b6b6b;
+    --line: #c7c7c7;
+    --panel: #f4f4f5;
+    --panel-line: #d8d8db;
+    --accent: #b3541e;
+    --accent-bg: #fdefe4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15161a;
+      --fg: #eceef1;
+      --muted: #9a9ea6;
+      --line: #46484f;
+      --panel: #1e2024;
+      --panel-line: #34363c;
+      --accent: #e0975a;
+      --accent-bg: #2c2117;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15161a;
+    --fg: #eceef1;
+    --muted: #9a9ea6;
+    --line: #46484f;
+    --panel: #1e2024;
+    --panel-line: #34363c;
+    --accent: #e0975a;
+    --accent-bg: #2c2117;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 28px 20px 40px;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 19px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 20px; }
+  figure { margin: 0; }
+  svg { width: 100%; height: auto; display: block; }
+  figcaption {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 14px;
+    max-width: 900px;
+    line-height: 1.55;
+  }
+  .legend {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 16px;
+    font-size: 12px;
+    color: var(--muted);
+    align-items: center;
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 22px; height: 0; border-top: 2px solid currentColor; display: inline-block; }
+  .swatch.accent { border-top-color: var(--accent); color: var(--accent); }
+  .swatch.dashed { border-top: 1px dashed var(--line); }
+</style>
+
+<h1>How one change reaches a live Shopify theme</h1>
+<p class="sub">Site A shown in full. Site B and Site C run the identical mechanism from the same shared repo.</p>
+
+<figure>
+  <svg viewBox="0 0 1180 540" role="img" aria-label="Two independent paths — a developer's code change and an editor's content change — both flow through Site A's staging and main branches, each connected to a Shopify theme, and both are approval-gated before reaching the live theme.">
+
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+      </marker>
+      <marker id="arrowAccent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)" />
+      </marker>
+    </defs>
+
+    <!-- lane labels -->
+    <text x="20" y="22" font-size="12" font-weight="600" fill="var(--muted)">DEV — code</text>
+    <text x="450" y="22" font-size="12" font-weight="600" fill="var(--muted)">SITE-A REPO</text>
+    <text x="740" y="22" font-size="12" font-weight="600" fill="var(--muted)">SHOPIFY · site-a-store</text>
+    <text x="20" y="216" font-size="12" font-weight="600" fill="var(--muted)">USER — content</text>
+
+    <!-- ================= ROW 1 (y 40–100): Dev entry ================= -->
+    <rect x="20" y="40" width="150" height="60" rx="6" fill="var(--panel)" stroke="var(--panel-line)" />
+    <text x="95" y="64" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">shopify-common</text>
+    <text x="95" y="82" text-anchor="middle" font-size="11" fill="var(--muted)">shared theme code</text>
+
+    <rect x="230" y="40" width="130" height="60" rx="6" fill="var(--panel)" stroke="var(--panel-line)" stroke-dasharray="4 3" />
+    <text x="295" y="62" text-anchor="middle" font-size="12" fill="currentColor">Validate</text>
+    <text x="295" y="78" text-anchor="middle" font-size="10.5" fill="var(--muted)">theme check · build</text>
+
+    <line x1="170" y1="70" x2="228" y2="70" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="192" y="60" text-anchor="middle" font-size="10.5" fill="var(--muted)">PR → staging</text>
+
+    <!-- ================= ROW 2 (y 150–210): staging branch / staging theme ================= -->
+    <rect x="440" y="150" width="150" height="60" rx="6" fill="var(--panel)" stroke="var(--panel-line)" />
+    <text x="515" y="174" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">staging branch</text>
+    <text x="515" y="192" text-anchor="middle" font-size="10.5" fill="var(--muted)">editor's content lives here</text>
+
+    <rect x="740" y="150" width="160" height="60" rx="6" fill="var(--panel)" stroke="var(--panel-line)" />
+    <text x="820" y="174" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Staging theme</text>
+    <text x="820" y="192" text-anchor="middle" font-size="10.5" fill="var(--muted)">unpublished</text>
+
+    <!-- Validate -> staging branch -->
+    <line x1="295" y1="100" x2="295" y2="140" stroke="currentColor" />
+    <line x1="295" y1="140" x2="438" y2="140" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="366" y="132" text-anchor="middle" font-size="10.5" fill="var(--muted)">merge</text>
+
+    <!-- staging branch <-> staging theme -->
+    <line x1="590" y1="167" x2="738" y2="167" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="664" y="159" text-anchor="middle" font-size="10.5" fill="var(--muted)">CI push (code)</text>
+
+    <line x1="738" y1="193" x2="590" y2="193" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="664" y="211" text-anchor="middle" font-size="10.5" fill="var(--muted)">editor saves → auto-commit</text>
+
+    <!-- ================= ROW 3 (y 230–290): Editor / approve / checklist ================= -->
+    <rect x="20" y="230" width="150" height="60" rx="6" fill="var(--panel)" stroke="var(--panel-line)" />
+    <text x="95" y="254" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Editor</text>
+    <text x="95" y="272" text-anchor="middle" font-size="10.5" fill="var(--muted)">Staging theme editor only</text>
+
+    <rect x="230" y="230" width="130" height="60" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" />
+    <text x="295" y="252" text-anchor="middle" font-size="12" fill="currentColor">/approve</text>
+    <text x="295" y="267" text-anchor="middle" font-size="10.5" fill="var(--muted)">comment on the issue —</text>
+    <text x="295" y="281" text-anchor="middle" font-size="10.5" fill="var(--muted)">production-approval gate</text>
+
+    <rect x="440" y="230" width="150" height="60" rx="6" fill="var(--panel)" stroke="var(--panel-line)" />
+    <text x="515" y="252" text-anchor="middle" font-size="12" fill="currentColor">Checklist issue</text>
+    <text x="515" y="267" text-anchor="middle" font-size="10.5" fill="var(--muted)">auto-diff comment</text>
+    <text x="515" y="281" text-anchor="middle" font-size="10.5" fill="var(--muted)">posted unprompted</text>
+
+    <!-- editor -> staging branch -->
+    <line x1="170" y1="248" x2="438" y2="198" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="270" y="228" text-anchor="middle" font-size="10.5" fill="var(--muted)">edits a page</text>
+
+    <!-- staging branch -> checklist issue -->
+    <line x1="515" y1="210" x2="515" y2="228" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="505" y="222" text-anchor="end" font-size="10.5" fill="var(--muted)">push → dispatch</text>
+
+    <!-- checklist issue -> /approve -->
+    <line x1="438" y1="260" x2="362" y2="260" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="399" y="252" text-anchor="middle" font-size="10.5" fill="var(--muted)">tick + promote</text>
+
+    <!-- ================= ROW 4 (y 340–400): Cut a Release ================= -->
+    <rect x="230" y="340" width="130" height="60" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" />
+    <text x="295" y="362" text-anchor="middle" font-size="12" fill="currentColor">Cut a Release</text>
+    <text x="295" y="377" text-anchor="middle" font-size="10.5" fill="var(--muted)">production-approval</text>
+    <text x="295" y="391" text-anchor="middle" font-size="10.5" fill="var(--muted)">gate</text>
+
+    <!-- shopify-common -> Cut a Release, routed around the Editor box below it -->
+    <line x1="95" y1="100" x2="95" y2="118" stroke="currentColor" />
+    <line x1="95" y1="118" x2="8" y2="118" stroke="currentColor" />
+    <line x1="8" y1="118" x2="8" y2="385" stroke="currentColor" />
+    <line x1="8" y1="385" x2="228" y2="385" stroke="currentColor" marker-end="url(#arrow)" />
+    <text x="14" y="112" font-size="10.5" fill="var(--muted)">release created</text>
+
+    <!-- ================= ROW 5 (y 430–490): main branch / prod theme ================= -->
+    <rect x="440" y="430" width="150" height="60" rx="6" fill="var(--panel)" stroke="var(--panel-line)" />
+    <text x="515" y="454" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">main branch</text>
+    <text x="515" y="472" text-anchor="middle" font-size="10.5" fill="var(--muted)">is production</text>
+
+    <rect x="740" y="430" width="160" height="60" rx="6" fill="var(--accent-bg)" stroke="var(--accent)" />
+    <text x="820" y="454" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Prod theme</text>
+    <text x="820" y="472" text-anchor="middle" font-size="10.5" fill="var(--accent)">live — customers see this</text>
+
+    <!-- /approve -> main branch (offset left of Cut a Release box, then across) -->
+    <line x1="270" y1="290" x2="270" y2="446" stroke="var(--accent)" />
+    <line x1="270" y1="446" x2="438" y2="446" stroke="var(--accent)" marker-end="url(#arrowAccent)" />
+    <text x="315" y="422" text-anchor="middle" font-size="10.5" fill="var(--accent)">approved →</text>
+    <text x="315" y="436" text-anchor="middle" font-size="10.5" fill="var(--accent)">commit ticked files</text>
+
+    <!-- Cut a Release -> main branch -->
+    <line x1="360" y1="380" x2="410" y2="380" stroke="var(--accent)" />
+    <line x1="410" y1="380" x2="410" y2="470" stroke="var(--accent)" />
+    <line x1="410" y1="470" x2="438" y2="470" stroke="var(--accent)" marker-end="url(#arrowAccent)" />
+    <text x="470" y="392" text-anchor="middle" font-size="10.5" fill="var(--accent)">approved → CI push</text>
+
+    <!-- main branch -> prod theme -->
+    <line x1="590" y1="454" x2="738" y2="454" stroke="var(--accent)" marker-end="url(#arrowAccent)" />
+    <text x="664" y="446" text-anchor="middle" font-size="10.5" fill="var(--accent)">Shopify sync</text>
+    <text x="664" y="469" text-anchor="middle" font-size="10.5" fill="var(--muted)">publishes instantly</text>
+
+    <!-- ================= FAN-OUT NOTE ================= -->
+    <rect x="985" y="150" width="190" height="90" rx="6" fill="none" stroke="var(--line)" stroke-dasharray="3 3" />
+    <text x="1080" y="172" text-anchor="middle" font-size="11.5" fill="var(--muted)">Same mechanism,</text>
+    <text x="1080" y="188" text-anchor="middle" font-size="11.5" fill="var(--muted)">once per site:</text>
+    <text x="1080" y="209" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">site-b, site-c</text>
+    <text x="1080" y="225" text-anchor="middle" font-size="10.5" fill="var(--muted)">own repo + own store</text>
+
+    <line x1="900" y1="180" x2="983" y2="190" stroke="var(--line)" stroke-dasharray="3 3" />
+
+  </svg>
+
+  <figcaption>
+    Two independent triggers reach the same live theme through the same two
+    branches. <strong>Dev</strong> (top): a PR merges into <code>staging</code>
+    after Validate passes, then a release gates a CI push into
+    <code>main</code>. <strong>User</strong> (bottom): an editor's save
+    auto-commits to <code>staging</code>, which posts a diff unprompted; ticking
+    a page and commenting <code>/approve</code> commits just those files into
+    <code>main</code>. In both paths, <code>main</code> is the only branch
+    connected to the live theme — nothing reaches it without passing through
+    <code>production-approval</code>.
+  </figcaption>
+</figure>
+
+<div class="legend">
+  <span><span class="swatch"></span> code / commit path</span>
+  <span><span class="swatch accent"></span> gated — needs approval</span>
+  <span><span class="swatch dashed"></span> repeats per site</span>
+</div>
