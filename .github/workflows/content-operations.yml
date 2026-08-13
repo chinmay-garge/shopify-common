@@ -89,7 +89,12 @@ jobs:
             action=refresh
             site_key="$MANUAL"
           elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            action=refresh
+            # Also runs the diff, not just a rebuild. A refresh that looks
+            # identical whether or not anything changed relies on the editor
+            # remembering to separately ask "what's different" every time —
+            # which will not happen. When we already know content changed,
+            # show what changed, unprompted.
+            action=refresh-and-diff
             site_key="$DISPATCHED"
             if [ -z "$site_key" ]; then
               echo "::error::repository_dispatch received without client_payload.site_key"
@@ -125,7 +130,7 @@ jobs:
   refresh:
     name: Rebuild checklist
     needs: resolve
-    if: needs.resolve.outputs.action == 'refresh'
+    if: needs.resolve.outputs.action == 'refresh' || needs.resolve.outputs.action == 'refresh-and-diff'
     runs-on: ubuntu-latest
     concurrency:
       group: content-${{ needs.resolve.outputs.site_key }}
@@ -176,8 +181,14 @@ jobs:
   # changed when 1 had. Branch-vs-branch avoids that entirely.
   diff:
     name: Show what would change
-    needs: resolve
-    if: needs.resolve.outputs.action == 'diff'
+    # Depends on `refresh` only to sequence after it when both run (so the
+    # comment appears under a checklist that already reflects the latest
+    # content) — `if:` still evaluates independently, so this runs standalone
+    # for the manual show-diff-* label path.
+    needs: [resolve, refresh]
+    if: |
+      always() &&
+      (needs.resolve.outputs.action == 'diff' || needs.resolve.outputs.action == 'refresh-and-diff')
     runs-on: ubuntu-latest
     concurrency:
       group: content-${{ needs.resolve.outputs.site_key }}
@@ -188,6 +199,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { path: hub }
+
+      # Resolves the issue by label rather than trusting github.event.issue.number,
+      # which does not exist when this runs via repository_dispatch.
+      - id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "content-promotion-$SITE_KEY" --state open --json number -q '.[0].number')
+          if [ -z "$NUM" ]; then
+            echo "::error::No open checklist issue found for $SITE_KEY yet — refresh should have created one."
+            exit 1
+          fi
+          echo "number=$NUM" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v4
         with:
@@ -204,6 +228,9 @@ jobs:
           token: ${{ secrets.ACCESS_PAT }}
 
       - name: Compare and comment
+        env:
+          ISSUE: ${{ steps.issue.outputs.number }}
+          AUTO: ${{ needs.resolve.outputs.action == 'refresh-and-diff' }}
         run: |
           set -euo pipefail
           node hub/scripts/compare-content.mjs --a ./stg/templates --b ./prd/templates --json > cmp.json
@@ -218,7 +245,11 @@ jobs:
           }
 
           {
-            echo "**What would change on $DISPLAY's live site**"
+            if [ "$AUTO" = "true" ]; then
+              echo "**A change was just saved on $DISPLAY's Staging theme — here's what it did:**"
+            else
+              echo "**What would change on $DISPLAY's live site**"
+            fi
             if [ "$(names changed)$(names onlyA)$(names onlyB)$(names unparseable)" = "" ]; then
               printf '\nNothing — staging and production are identical.\n'
             fi
@@ -229,8 +260,9 @@ jobs:
             printf '\n_%s template(s) already identical._\n' "$(node -e "console.log(require('./cmp.json').inSync)")"
           } > comment.md
 
-          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file comment.md
-          gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "show-diff-$SITE_KEY"
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" --body-file comment.md
+          # Only the manual show-diff-* path carries this label to remove.
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label "show-diff-$SITE_KEY" 2>/dev/null || true
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
 
   collect:
