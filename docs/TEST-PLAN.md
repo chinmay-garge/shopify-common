@@ -145,15 +145,32 @@ see notes.
       and the five singletons appeared. This matters because promoting
       `product.json` would change every product page at once — a decision that
       should never be one tick in a checklist.
-- [ ] **D3 — Diff is accurate.** After editing content on Staging,
-      `show-diff-sb-a` reports changed / staging-only / prod-only correctly.
-- [ ] **D4 — Line endings are not false positives.** A CRLF-vs-LF difference
-      alone does not show as changed.
-- [ ] **D5 — Promote is approval-gated.** `promote-sb-a` waits for approval
-      before touching Prod.
-- [ ] **D6 — Snapshot before overwrite.** The pre-promotion Prod state lands on
-      `content-snapshots-sb-a`.
-- [ ] **D7 — Only ticked files ship.** Unticked templates are untouched on Prod.
+- [x] **D3 — Diff is accurate.** Fixed twice over. A byte-comparison of the repo
+      against a theme pull reported **10 of 10 templates changed when 1 had**,
+      because Shopify prepends an auto-generated banner and materialises empty
+      `"settings": {}`. Now compares `staging` branch against `main` branch —
+      no Shopify call, no token, and none of those artefacts, since both sides
+      are repo-formatted. Reports exactly the one changed page.
+      Why it mattered: a report that always says "everything changed" gets
+      ignored, and then a reviewer approves a promotion without reading it.
+- [x] **D5 — Promote is approval-gated.** Verified with a real pending
+      deployment on `production-approval`. An earlier run where `approve`
+      finished in 3s looked like a bypass but was simply a fast human click.
+- [x] **D6 — There is a way back.** The snapshot branch was **removed**, not
+      fixed: it was the cause of the silent no-op (see J5), and `main`'s history
+      is a better record anyway. The success comment names the commit SHA and
+      says to revert it.
+- [x] **D7 — Only ticked files ship.** One page ticked of ten; the commit
+      contains exactly that path.
+- [x] **D8 — Checklist resets.** 0 ticked boxes and the `promote-sb-a` label
+      removed after a successful promotion.
+- [x] **D13 — Promotion is verified, not assumed.** The new step reads the live
+      theme back and semantically compares it to what was committed, retrying for
+      ~90s, and **fails** if the theme never matches. Also distinguishes "already
+      identical to production" from "promoted", so a no-op cannot be reported as a
+      success. This exists because of J5.
+      End-to-end proof: `staging` r5 → gated approval → commit to `main` →
+      **live theme r5**, confirmed independently afterwards.
 - [ ] **D8 — Checklist resets.** Ticks clear after a successful promotion.
 - [ ] **D9 — Nothing ticked.** Promoting with no ticks comments and bails
       without shipping.
