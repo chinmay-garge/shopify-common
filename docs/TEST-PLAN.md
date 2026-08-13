@@ -70,8 +70,10 @@ see notes.
       **This is the control that could not be tested on the real repo at all**,
       because creating the environment required admin there.
       Re-confirmed on a release-triggered run, not just a manual one.
-- [ ] **B6 — Single approval covers all sites.** One approval releases the
-      whole matrix. Needs more than one site installed.
+- [x] **B6 — Single approval covers all sites.** One approval on the
+      `production-approval` gate released `Deploy (SITE-A)`, `Deploy (SITE-C)`
+      and `Deploy (SITE-B)` together — confirmed via a real release
+      (`2026-08-13-1`), not a synthetic dispatch.
 - [x] **B7 — Backup artefact.** `backup-SITE-A-31624704580`, 596 KB, retained 90
       days (expires 2026-11-10). Taken before the overwrite, so it is a genuine
       rollback point rather than a record of what was just deployed.
@@ -110,8 +112,11 @@ see notes.
       naive version opens a fresh issue every push, and since these repos also
       receive a commit for every content edit made in the Shopify admin, that
       buries real drift under noise.
-- [ ] **C4 — Auto-close.** Once drift is resolved the issue closes itself.
-      Pending — will be exercised by F1, which resolves site-a's drift.
+- [x] **C4 — Auto-close.** Once both outstanding drift causes were resolved
+      (the `sandbox-table` port landing on `main` via a release, and the code
+      marker reaching site-a's live theme via the same release's production
+      deploy), a re-run closed the issue with
+      "Drift resolved as of `<sha>`. Closing." — `state=CLOSED`.
 - [x] **C5 — Exclusions hold.** Strong result: across 300+ files per repo —
       all of Dawn, content JSON on both sides, and `.vbt.` build assets present
       in the site repos but gitignored in common — exactly the five intended
@@ -178,8 +183,11 @@ see notes.
       **live theme r5**, confirmed independently afterwards.
 - [x] **D9 — Nothing ticked.** PASSED. Promoting with nothing ticked posts "Nothing to promote — no pages were ticked", removes the label, and the approval and promote jobs never run — so no reviewer is pinged for an empty request.
 
-- [ ] **D10 — Failure leaves a retry path.** A failed promotion keeps the label
-      and reports the run URL.
+- [x] **D10 — Failure leaves a retry path.** A promotion with a nonexistent
+      page ticked (`page.does-not-exist.json`) failed at the promote step. Ticks
+      were left exactly as they were, `promote-sb-a` stayed on the issue, and the
+      comment gave the exact retry step: remove and re-add the label. Nothing
+      silently succeeded, and nothing was lost.
 - [x] **D11 — Site isolation.** PASSED, and now structural rather than incidental. Promoting `sb-a` commits only to `site-a`; site-b and site-c `main` branches were untouched, still on their earlier commit. Cross-site contamination is impossible by construction since each promote targets one repo.
 
 - [x] **D12 — Unknown site key.** PASSED. A `promote-sb-z` label failed at `resolve` with an explicit "Unknown site key" error, and every downstream job — including the approval — was skipped.
