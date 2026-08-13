@@ -460,6 +460,30 @@ the workflow's app or team.
         trusted. Untested and important.
 - [x] **J6 — Are code deploys durable against a connected theme?** PASSED — and it corrected an earlier wrong conclusion. A code marker CLI-pushed to the connected staging theme persisted on the theme, survived 45s, and was echoed into the `staging` branch by `shopify[bot]`. Code deploys to connected themes are durable; see J5 for the retraction this contributed to.
 
+## K. Page scaffolding
+
+The client's `create-store-page.yml` was retired (invalid Admin API token) and
+`theme-seed-pages.yml` only pushed to one target per run. This revisits the same
+problem — a new page's template must exist before anyone can attach it — using
+the branch-connection model instead of a raw CLI push.
+
+- [x] **K1 — Template reaches both themes before any page exists.**
+      `page.about-us.json`, generated from `sandbox-hero` with the given title,
+      confirmed present with identical content on Site A's **Staging**
+      (`163070116097`) and **Prod** (`163070083329`) themes — pulled directly
+      from Shopify, not inferred from the commit. A page created against either
+      theme has something valid to attach from the first moment.
+- [x] **K2 — Duplicate slugs are rejected, not overwritten.** Re-running with an
+      existing slug failed with `templates/page.about-us.json already exists on
+      site-a's staging branch. Choose a different slug, or this is a duplicate
+      page.` before writing anything. An existing page's template can't be
+      silently replaced by a naming collision.
+- [x] **K3 — One run, multiple sites.** `sites=all` scaffolded `page.contact-
+      new.json` across Site A, B, and C in a single dispatch; independently
+      confirmed present on all 6 theme targets (3 sites × staging/prod).
+      `fail-fast: false` per site, matching the pattern already proven for code
+      deploys (B1/F3) — one site's naming clash would not block the others.
+
 ## Findings
 
 Recorded as they come up, with the process change each one implies.
