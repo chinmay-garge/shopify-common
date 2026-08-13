@@ -163,7 +163,7 @@ jobs:
           if [ -z "$NUM" ]; then
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file body.md
           else
-            gh issue edit "$NUM" --repo "$GITHUB_REPOSITORY" --body-file body.md
+            gh issue edit "$NUM" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file body.md
             echo "Updated issue #$NUM"
           fi
 
