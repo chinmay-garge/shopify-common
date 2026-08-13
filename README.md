@@ -132,6 +132,24 @@ matrix, which matches the agreed policy of a single approver for all sites.
 
 Repo variables: `STAGING_SITES`, `PRODUCTION_SITES` (comma-separated env names).
 
+### The sites
+
+Store subdomains are auto-generated and unmemorable, so here is the mapping:
+
+| Site | Store | Site repo | `prod` theme | `staging` theme |
+|---|---|---|---|---|
+| SITE-A | `0fjhbq-rs` | `chinmay-garge/site-a` | 163070083329 | 163070116097 |
+| SITE-B | `m3cfzx-rp` | `chinmay-garge/site-b` | 192771785074 | 192771817842 |
+| SITE-C | `kydspe-qt` | `chinmay-garge/site-c` | 193501921646 | 193501954414 |
+
+Each store sits in its **own Shopify organisation**, which is why credentials are
+per-environment rather than shared — see below. The client setup is expected to
+be one organisation with many stores, which is the simpler case: identical
+workflows, with the credentials moved up to repo level.
+
+Every theme is connected to a branch of its site repo via Shopify's GitHub
+integration: `staging` branch to the `staging` theme, `main` branch to `prod`.
+
 Per-site environments (`SITE-A` / `SITE-B` / `SITE-C`):
 
 | Key | Kind | Purpose |
@@ -140,13 +158,24 @@ Per-site environments (`SITE-A` / `SITE-B` / `SITE-C`):
 | `THEME_ID` | variable | production theme |
 | `THEME_ID_STAGING` | variable | staging theme |
 
-Repo secrets:
+Per-site environment **secrets** — one app per Shopify organisation, so these
+cannot be shared:
 
 | Key | Purpose |
 |---|---|
 | `SHOPIFY_CLIENT_ID` | app client ID, used to mint Shopify tokens at runtime |
 | `SHOPIFY_CLIENT_SECRET` | app client secret |
+
+Repo secret:
+
+| Key | Purpose |
+|---|---|
 | `ACCESS_PAT` | GitHub PAT with `repo` scope, for cross-repo checkout |
+
+There is deliberately **no repo-level** `SHOPIFY_CLIENT_ID`/`SECRET`. Environment
+secrets override repo secrets of the same name, so a repo-level pair would act as
+a silent fallback — and a site missing its own credentials would authenticate
+against the **wrong store** instead of failing. Better to fail loudly.
 
 ### Shopify auth
 
