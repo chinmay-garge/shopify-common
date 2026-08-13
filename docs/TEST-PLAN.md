@@ -353,8 +353,44 @@ the workflow's app or team.
       template to `main` reached the live prod theme before the first poll.
       The risk is real, and branch protection plus a gated writer is what
       contains it.
-- [x] **J5 — Promotion must go through git, not the CLI. This is not an
-      optimisation; the CLI path does not work on a connected theme.**
+- [x] **J5 — RETRACTED AND CORRECTED. The cause was a bug in this repo's own
+      promote job, not Shopify.**
+
+      What was originally concluded here — "a `theme push` to a GitHub-connected
+      theme reports success and does not persist" — **was wrong.** It was inferred
+      from one failing run without isolating the variable. Two later tests
+      disproved it: a code marker pushed to the connected staging theme persisted
+      and echoed into the branch, and an `r4` content push to the **live**
+      connected prod theme persisted and echoed into `main`. Pushes to connected
+      themes work in both directions.
+
+      The real cause, found by reading the step that runs immediately before the
+      push:
+      ```bash
+      cp -f ../prod-snapshot/templates/*.json templates/   # in working-directory: site
+      ```
+      The snapshot step pulled **production's** content and copied it **over the
+      staging checkout**. The push then shipped `page.sandbox-content.json` — which
+      by then held production's own content. So promote pushed prod back to prod:
+      a genuine no-op that correctly reported `pushed successfully`.
+
+      Reproduced twice (`r3-promoted`, then `r5-promote-retest`), which is what
+      turned it from "Shopify is unreliable" into "find the bug in your own
+      workflow".
+
+      Two lessons worth keeping:
+      - **The failure shape is still the dangerous one**: green run, success
+        comment, checklist reset, production unchanged. That part of the original
+        finding stands, and it is why promote must verify rather than assume.
+      - **A snapshot must never be written into the tree you are about to deploy
+        from.** Reading state and staging a deploy are different jobs and need
+        different directories.
+
+      Design conclusion unchanged, but for honest reasons: promotion moves to git —
+      commit ticked files to the connected branch — because it removes the CLI, the
+      token, the `--only` plumbing and the snapshot clobber all at once, and
+      because `main`'s history is a better snapshot than a force-pushed branch.
+      Not because the CLI cannot do it.
 
       Measured on the live prod theme (`163070083329`, connected to `main`):
 
@@ -401,7 +437,8 @@ Recorded as they come up, with the process change each one implies.
 | 4 | Line endings must be pinned repo-wide | Added `.gitattributes` with `* text=auto eol=lf` to all four repos. Without it a Windows checkout rewrites text to CRLF and byte-comparison reports every file as changed — the same effect that made 49 identical real files look diverged. Drift detection and content diffing both depend on byte equality. |
 | 5 | Shopify credential prefixes are easy to confuse, and all failures look identical (`401`) | Three wrong credentials were tried before one worked. Worth stating explicitly in the runbook: `shptka_` = Theme Access password, `shpss_` = Storefront token **and also the client secret**, `shpat_` = Admin API token (the one theme operations need). A 401 never says which mistake you made. |
 | 6 | A green deploy can silently not ship your change (E2) | The single most dangerous finding. Because `locales/*.json` is ignored by design, a locale change is committed, deployed successfully, and still absent from the theme. Any process doc must pair "locale changed?" with "run Sync Locales" — reading a green checkmark as proof is wrong. |
-| 11 | **A `theme push` to a GitHub-connected theme can report success and change nothing (J5)** | **The most dangerous class of failure found: a green run, a success comment, a reset checklist, and production untouched.** Anything writing to a connected theme must go through git — commit to the connected branch — not the CLI. Also means `--allow-live` succeeding is not evidence that anything shipped. |
+| 11 | **A deploy step can report success and ship nothing (J5)** | Cause was ours: a snapshot step copied prod's content over the staging checkout, so the push shipped prod back to prod. **`pushed successfully` is not evidence that your content shipped** — verify the result, and never write state into the tree you deploy from. An earlier version of this row blamed Shopify's GitHub connection; that was wrong and was retracted after two tests showed pushes to connected themes persist fine. |
+| 14 | Diagnosing from a single failing run produced a confidently wrong conclusion | The claim above survived one run and a plausible mechanism. It took a reproduction plus two controlled counter-tests to overturn. Worth remembering when a finding implicates a third party rather than your own code. |
 | 12 | Diff must be semantic, not byte-for-byte (D3) | Shopify prepends an auto-generated banner and materialises empty `"settings": {}`. A byte diff reported 10 of 10 templates changed when 1 had. A diff that always says "everything changed" is worse than none — reviewers stop reading it and approve blind. |
 | 13 | A connected theme means the branch, not the theme, is the unit of work | Reading `ref: main` for content that lives on `staging` made the diff compare production against itself, and would have made promote a no-op even without finding 11. |
 | 8 | **A deploy without `--nodelete` deletes a site's own files — from the theme AND, via the GitHub connection, from the repo (J3)** | **The most serious finding. `hydrafacial`'s deploys pass `--nodelete` nowhere; skinstylus's did.** Masked today only because the five regions hold identical code. Fix before the skinstylus migration, or unported files are destroyed with no git record. Add a deliberate prune path for intentional removals. |
