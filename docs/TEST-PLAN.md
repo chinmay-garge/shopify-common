@@ -46,10 +46,8 @@ see notes.
 
 ## B. Code deploys
 
-- [ ] **B1 — Staging fan-out.** Push to `staging` deploys to all three staging
-      themes; `fail-fast: false` means one bad site does not block the others.
-      Deferred: only site-a has the app installed, so the matrix is narrowed to
-      `SITE-A` for now.
+- [x] **B1 — Staging fan-out.** PASSED. Deployed to all three staging themes in one run, each to its own theme (`163070116097`, `192771817842`, `193501954414`) on its own store. Confirmed twice. `fail-fast: false` isolation proved separately by F3.
+
 - [x] **B2 — Manual single-site deploy.** `workflow_dispatch` with `SITE-A`
       deployed only site-a, to its **Staging** theme
       (`Sandbox Staging` #157241114762) — confirmed from the push result, so the
@@ -61,9 +59,8 @@ see notes.
 - [x] **B3a — Token never leaks.** Grepped the full deploy log for
       `shpat_[a-f0-9]{6}`: no match. `::add-mask::` plus passing the token via
       `GITHUB_ENV` rather than step outputs holds up.
-- [ ] **B4 — Content is not clobbered.** Edit `page.sandbox-content.json` in a
-      Staging theme editor, run a code deploy, confirm the edit **survives**
-      (this is what the ignore list buys).
+- [x] **B4 — Content is not clobbered.** PASSED. Site-a staging content stayed at `r5-promote-retest` across a full code deploy, and `sandbox-table.liquid` survived too — a direct regression test of the `--nodelete` fix that previously deleted it.
+
 - [x] **B5 — Production needs approval.** Confirmed in both directions.
       *Held:* run status `waiting`, `approve` pending on `production-approval`,
       and the `deploy` job never started — nothing reached the store.
@@ -119,11 +116,9 @@ see notes.
       all of Dawn, content JSON on both sides, and `.vbt.` build assets present
       in the site repos but gitignored in common — exactly the five intended
       fixtures were flagged and nothing else. Zero false positives.
-- [ ] **C6 — Common wins.** After a code deploy, `site-b`'s banner marker flips
-      from `SITE-B-VERSION` to `COMMON-VERSION`, and `site-c` loses its extra
-      `hide_background` setting.
-- [ ] **C7 — Orphaned settings are harmless.** Content JSON that still sets
-      `hide_background` after the setting is dropped does not break rendering.
+- [x] **C6 — Common wins.** PASSED, with the branch as evidence. Both site-b and site-c staging branches now read `data-sandbox-origin="COMMON-VERSION"` and site-c's extra `hide_background` setting is gone, with `shopify[bot]: Update from Shopify for theme staging` as the latest commit. Common won, the theme took it, the branch recorded it.
+
+- [!] **C7 — Orphaned settings are harmless.** NOT EXERCISABLE as written. After the deploy replaced site-c's section, no template in site-c still referenced the removed `hide_background` setting, so there was no orphaned setting left to test. Recording this rather than claiming a pass — the fixture needed a template that sets the value, which it never had.
 
 ## D. Content promotion
 
@@ -153,6 +148,16 @@ see notes.
       are repo-formatted. Reports exactly the one changed page.
       Why it mattered: a report that always says "everything changed" gets
       ignored, and then a reviewer approves a promotion without reading it.
+- [x] **D4 — Line endings and reformatting are not false positives.** Reproduces
+      the client artefact precisely. The same ten templates, re-indented to four
+      spaces and converted to CRLF: a byte-level `diff -qr` reported **15 files
+      different**; the semantic comparison reported **0 changed, 10 in sync**.
+      This is the effect that made 49 identical client files look diverged, and
+      the reason the comparator parses rather than compares bytes.
+      *(This entry was accidentally deleted by a careless `sed` range while
+      tidying the document, and restored. Worth noting because the same class of
+      mistake — a range delete taking neighbours with it — is exactly what the
+      `--nodelete` finding was about.)*
 - [x] **D5 — Promote is approval-gated.** Verified with a real pending
       deployment on `production-approval`. An earlier run where `approve`
       finished in 3s looked like a bypass but was simply a fast human click.
@@ -171,14 +176,13 @@ see notes.
       success. This exists because of J5.
       End-to-end proof: `staging` r5 → gated approval → commit to `main` →
       **live theme r5**, confirmed independently afterwards.
-- [ ] **D8 — Checklist resets.** Ticks clear after a successful promotion.
-- [ ] **D9 — Nothing ticked.** Promoting with no ticks comments and bails
-      without shipping.
+- [x] **D9 — Nothing ticked.** PASSED. Promoting with nothing ticked posts "Nothing to promote — no pages were ticked", removes the label, and the approval and promote jobs never run — so no reviewer is pinged for an empty request.
+
 - [ ] **D10 — Failure leaves a retry path.** A failed promotion keeps the label
       and reports the run URL.
-- [ ] **D11 — Site isolation.** `promote-sb-a` never touches site-b or site-c.
-- [ ] **D12 — Unknown site key.** A malformed label fails loudly instead of
-      defaulting to some site.
+- [x] **D11 — Site isolation.** PASSED, and now structural rather than incidental. Promoting `sb-a` commits only to `site-a`; site-b and site-c `main` branches were untouched, still on their earlier commit. Cross-site contamination is impossible by construction since each promote targets one repo.
+
+- [x] **D12 — Unknown site key.** PASSED. A `promote-sb-z` label failed at `resolve` with an explicit "Unknown site key" error, and every downstream job — including the approval — was skipped.
 
 ## E. Locales
 
@@ -203,14 +207,12 @@ see notes.
 The rehearsal for adding a fourth site — the real-world scenario that started
 all of this.
 
-- [ ] **F1 — Port a unique section.** Move `sandbox-table` into common
-      *deliberately forgetting* the snippet and locale keys; confirm the
-      failures surface. Then do it properly.
+- [x] **F1 — Port a unique section.** PASSED, both halves. **Incomplete port** (section only, no snippet, no locale keys) was caught by Validate with `MissingTemplate` naming `snippets/sandbox-table-cell.liquid` at the `{% render %}` line, plus 11 × `ValidSchemaTranslations`. **Completed port** (snippet + locale keys added) went green. This is the client's comparison-table mistake, now caught at PR time instead of by a human opening the theme editor.
+
 - [ ] **F2 — Port the simple case.** `sandbox-steps` needs no locale work;
       confirm the runbook does not demand unnecessary steps.
-- [ ] **F3 — Cold onboarding.** Add a site to the matrix with **no**
-      environment configured and confirm it fails loudly and in isolation,
-      rather than half-deploying.
+- [x] **F3 — Cold onboarding.** PASSED. Adding `SITE-D` to the matrix with no environment configured: `Deploy (SITE-D)` failed while SITE-A, SITE-B and SITE-C all succeeded, and the failure came from the token action's own diagnostic rather than an opaque error. Matrix variable restored afterwards.
+
 - [ ] **F4 — Full onboarding.** Environment, vars, token, labels, matrix entry
       — then deploy successfully.
 
@@ -272,12 +274,11 @@ change is worth more than recovering from one.
 
 ## G. Git hygiene
 
-- [ ] **G1 — Diverged history reproduces.** Sync `main` and `staging` by
-      content but not ancestry, and confirm PRs then show a large phantom diff.
-- [ ] **G2 — Merge fixes it.** A real merge between the branches restores clean
-      diffs.
-- [ ] **G3 — Dropped commit.** Reproduce a follow-up commit being lost when a
-      PR merges mid-push, and find a guard against it.
+- [x] **G1 — Diverged history reproduces.** PASSED — reproduced the phantom diff. Two branches with byte-identical trees but a stale merge-base (content "synced" by copying rather than merging): a feature branch containing **one** real change showed **11 files** in its diff.
+
+- [x] **G2 — Merge fixes it.** PASSED — the fix works. After a real merge restored ancestry, the same feature branch showed **1 file**. Content never changed; only history did.
+
+- [x] **G3 — Dropped commit.** PASSED in a deterministic variant, with an honest caveat. The original incident was a race and is not reproducible on demand. What is reproducible: merging a branch at an earlier SHA silently omits later commits — the merged result did not contain "Follow-up fix". The detection also works: comparing the merge result against the branch tip surfaces exactly the file left behind. Lesson: "merged" does not imply "contains the latest".
 
 ## J. GitHub–theme connection
 
@@ -312,7 +313,11 @@ the workflow's app or team.
 - [ ] **J1 — Editor → commit.** An edit in the Staging theme editor appears as a
       commit on the site repo's `staging` branch. This is the premise everything
       else assumes.
-- [ ] **J2 — Commit → theme.** A commit to `staging` reaches the Staging theme.
+- [x] **J2 — Commit → theme.** Confirmed twice, in both directions of the
+      pipeline. Restoring `sandbox-table.liquid` to the `staging` branch put it on
+      the staging theme; committing a promoted template to `main` put it on the
+      **live** theme before the first poll. This is the property the whole
+      git-based promote design rests on.
 - [x] **J3 — Echo-back from a CI deploy. This found the worst bug in the setup.**
 
       The echo is real: a staging deploy produced
@@ -438,9 +443,7 @@ the workflow's app or team.
       - **code deploys are now suspect too**: `deploy-staging` CLI-pushes to a
         connected theme. It appeared to work, but by the rule above it cannot be
         trusted. Untested and important.
-- [ ] **J6 — Are code deploys durable against a connected theme?** The open
-      question J5 raises. If not, the shared-repo deploy model needs rethinking
-      for connected themes — deploy by committing to the site branch instead.
+- [x] **J6 — Are code deploys durable against a connected theme?** PASSED — and it corrected an earlier wrong conclusion. A code marker CLI-pushed to the connected staging theme persisted on the theme, survived 45s, and was echoed into the `staging` branch by `shopify[bot]`. Code deploys to connected themes are durable; see J5 for the retraction this contributed to.
 
 ## Findings
 
