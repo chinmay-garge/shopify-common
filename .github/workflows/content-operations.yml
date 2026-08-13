@@ -1,19 +1,44 @@
 name: Content operations
 
 run-name: >-
-  ${{ github.event_name == 'issues' && format('{0} · issue #{1}', github.event.label.name, github.event.issue.number) || format('Content operations · {0}', inputs.site_key) }}
+  ${{ github.event_name == 'issues' && format('{0} · issue #{1}', github.event.label.name, github.event.issue.number)
+   || github.event_name == 'repository_dispatch' && format('refresh · {0} · content changed', github.event.client_payload.site_key)
+   || format('refresh · {0} · manual', inputs.site_key) }}
 
-# CONTENT lane. One workflow serves every site; the target site is parsed out of
-# the label that triggered it, so onboarding a new site means adding one case to
-# `resolve` plus its environment/vars — never a new workflow file.
+# Content promotion, driven entirely by issue labels so a non-technical editor
+# never needs a terminal.
 #
-#   refresh-<site>    rebuild that site's checklist issue from its templates
-#   show-diff-<site>  report Staging vs Prod differences (read-only)
-#   promote-<site>    ship the ticked templates to Prod (approval-gated)
+# The model
+# ---------
+# Each site repo has two branches, each connected to a Shopify theme:
+#   staging branch  <-> staging theme   (where editors work)
+#   main branch     <-> prod theme      (live)
 #
-# Each site's content lives in ITS OWN repo, which is git-connected to that
-# site's Staging theme — so the repo IS staging's content, and every job here
-# cross-checks-out that repo using ACCESS_PAT.
+# Because the connection is live, `main` IS production — they cannot drift.
+# That gives promotion a much simpler shape than pushing files to a theme:
+#
+#   promote = copy the ticked files from `staging` to `main`, and commit.
+#
+# Shopify delivers the rest. No Shopify credentials are needed to promote, no
+# `--only` flags, no `--allow-live`.
+#
+# Why it works this way (learned the hard way)
+# -------------------------------------------
+# The previous version pushed to the prod theme with the CLI, and had a step that
+# snapshotted prod into the same checkout it deployed from:
+#
+#   cp -f ../prod-snapshot/templates/*.json templates/    # in the deploy tree
+#
+# That overwrote the staging content with prod's own content, so the push shipped
+# prod back to prod — a no-op that reported "pushed successfully", commented
+# success on the issue, and reset the checklist while production never changed.
+#
+# Two rules came out of it, both applied below:
+#   1. Never write state into the tree you deploy from.
+#   2. A successful write is not proof of a shipped change. Verify the result.
+#
+# The snapshot step is gone entirely: `main`'s history is the snapshot, and
+# `git revert` is the rollback.
 
 on:
   workflow_dispatch:
@@ -25,6 +50,11 @@ on:
         options: [sb-a, sb-b, sb-c]
   issues:
     types: [labeled]
+  # Sent by a site repo when its content changes, so the checklist never goes
+  # stale. A stale checklist is worse than none: it looks authoritative while
+  # pointing at the wrong pages.
+  repository_dispatch:
+    types: [content-changed]
 
 permissions:
   issues: write
@@ -32,26 +62,39 @@ permissions:
 
 jobs:
   resolve:
+    name: Resolve site
+    runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'repository_dispatch' ||
       startsWith(github.event.label.name, 'refresh-') ||
       startsWith(github.event.label.name, 'show-diff-') ||
       startsWith(github.event.label.name, 'promote-')
-    runs-on: ubuntu-latest
     outputs:
       action: ${{ steps.r.outputs.action }}
       site_key: ${{ steps.r.outputs.site_key }}
       repo: ${{ steps.r.outputs.repo }}
       env_name: ${{ steps.r.outputs.env_name }}
+      display: ${{ steps.r.outputs.display }}
     steps:
       - id: r
         env:
           LABEL: ${{ github.event.label.name }}
           MANUAL: ${{ inputs.site_key }}
+          DISPATCHED: ${{ github.event.client_payload.site_key }}
         run: |
+          set -euo pipefail
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             action=refresh
             site_key="$MANUAL"
+          elif [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            action=refresh
+            site_key="$DISPATCHED"
+            if [ -z "$site_key" ]; then
+              echo "::error::repository_dispatch received without client_payload.site_key"
+              exit 1
+            fi
           else
             case "$LABEL" in
               refresh-*)   action=refresh; site_key="${LABEL#refresh-}" ;;
@@ -61,10 +104,12 @@ jobs:
             esac
           fi
 
+          # `display` is what an editor reads. Site keys like "sb-a" are plumbing
+          # and belong in label names, not in anything human-facing.
           case "$site_key" in
-            sb-a) repo=site-a; env_name=SITE-A ;;
-            sb-b) repo=site-b; env_name=SITE-B ;;
-            sb-c) repo=site-c; env_name=SITE-C ;;
+            sb-a) repo=site-a; env_name=SITE-A; display="Site A" ;;
+            sb-b) repo=site-b; env_name=SITE-B; display="Site B" ;;
+            sb-c) repo=site-c; env_name=SITE-C; display="Site C" ;;
             *) echo "::error::Unknown site key '$site_key' (expected sb-a|sb-b|sb-c)"; exit 1 ;;
           esac
 
@@ -73,10 +118,12 @@ jobs:
             echo "site_key=$site_key"
             echo "repo=$repo"
             echo "env_name=$env_name"
+            echo "display=$display"
           } >> "$GITHUB_OUTPUT"
-          echo "action=$action site=$site_key repo=$repo env=$env_name"
+          echo "action=$action site=$site_key ($display) repo=$repo env=$env_name"
 
   refresh:
+    name: Rebuild checklist
     needs: resolve
     if: needs.resolve.outputs.action == 'refresh'
     runs-on: ubuntu-latest
@@ -93,16 +140,20 @@ jobs:
         with:
           repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
           path: site
-          ref: main
+          # `staging` — the editor's branch. Reading `main` listed production's
+          # templates, so a page an editor had just created would not appear.
+          ref: staging
           token: ${{ secrets.ACCESS_PAT }}
 
       - name: Build checklist body
         run: node hub/scripts/gen-content-list.mjs --dir ./site/templates --site "$SITE_KEY" > body.md
 
       - name: Upsert the checklist issue
+        env:
+          DISPLAY: ${{ needs.resolve.outputs.display }}
         run: |
           LABEL="content-promotion-$SITE_KEY"
-          TITLE="Content promotion — $SITE_KEY"
+          TITLE="Content promotion — $DISPLAY"
           NUM=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state open --json number -q '.[0].number')
           if [ -z "$NUM" ]; then
             gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label "$LABEL" --body-file body.md
@@ -116,18 +167,24 @@ jobs:
         run: |
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "refresh-$SITE_KEY"
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --body "Checklist rebuilt from \`$SITE_KEY\` templates. All ticks were reset."
+            --body "Checklist rebuilt from the staging theme's content. All ticks were reset."
 
+  # Compares the two branches directly. No Shopify call, so no credentials and no
+  # environment — and, usefully, no formatting artefacts: Shopify prepends an
+  # auto-generated banner and materialises empty `"settings": {}` on files it
+  # serves, which made an earlier theme-vs-repo diff report 10 of 10 templates
+  # changed when 1 had. Branch-vs-branch avoids that entirely.
   diff:
+    name: Show what would change
     needs: resolve
     if: needs.resolve.outputs.action == 'diff'
     runs-on: ubuntu-latest
-    environment: ${{ needs.resolve.outputs.env_name }}
     concurrency:
       group: content-${{ needs.resolve.outputs.site_key }}
     env:
       GH_TOKEN: ${{ github.token }}
       SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+      DISPLAY: ${{ needs.resolve.outputs.display }}
     steps:
       - uses: actions/checkout@v4
         with: { path: hub }
@@ -135,43 +192,49 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
-          path: site
+          path: stg
+          ref: staging
+          token: ${{ secrets.ACCESS_PAT }}
+
+      - uses: actions/checkout@v4
+        with:
+          repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
+          path: prd
           ref: main
           token: ${{ secrets.ACCESS_PAT }}
 
-      - name: Install Shopify CLI
-        run: npm install -g @shopify/cli
-
-      # NOTE the ./hub/ prefix. `uses:` resolves relative to GITHUB_WORKSPACE,
-      # and this repo is checked out into hub/ — so the bare ./.github/... path
-      # used by the deploy workflows would not resolve here.
-      - name: Get Shopify access token
-        uses: ./hub/.github/actions/shopify-token
-        with:
-          store: ${{ vars.STORE }}
-          client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
-          client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
-
-      - name: Pull content templates from Prod
-        run: |
-          mkdir -p prod
-          shopify theme pull \
-            --path ./prod \
-            --nodelete \
-            --only "templates/*.json" \
-            --theme ${{ vars.THEME_ID }} \
-            --store ${{ vars.STORE }}
-
       - name: Compare and comment
         run: |
-          node hub/scripts/gen-content-list.mjs \
-            --diff --staging ./site/templates --prod ./prod/templates --site "$SITE_KEY" > comment.md
-          cat comment.md
+          set -euo pipefail
+          node hub/scripts/compare-content.mjs --a ./stg/templates --b ./prd/templates --json > cmp.json
+          cat cmp.json
+
+          names() { node -e "const j=require('./cmp.json');console.log((j['$1']||[]).join(','))"; }
+          section() {
+            csv=$(names "$2")
+            [ -z "$csv" ] && return 0
+            printf '\n**%s**\n\n| Page | Template |\n|---|---|\n' "$1"
+            node hub/scripts/gen-content-list.mjs --names "$csv"
+          }
+
+          {
+            echo "**What would change on $DISPLAY's live site**"
+            if [ "$(names changed)$(names onlyA)$(names onlyB)$(names unparseable)" = "" ]; then
+              printf '\nNothing — staging and production are identical.\n'
+            fi
+            section "Changed on staging — not yet live" changed
+            section "New on staging — not yet live" onlyA
+            section "Live but missing from staging" onlyB
+            section "Could not be read — needs a look" unparseable
+            printf '\n_%s template(s) already identical._\n' "$(node -e "console.log(require('./cmp.json').inSync)")"
+          } > comment.md
+
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file comment.md
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "show-diff-$SITE_KEY"
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
 
   collect:
+    name: Read the ticks
     needs: resolve
     if: needs.resolve.outputs.action == 'promote'
     runs-on: ubuntu-latest
@@ -197,35 +260,42 @@ jobs:
         if: steps.c.outputs.empty == 'true'
         run: |
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --body "Nothing to promote — no templates were ticked. Tick one or more, then re-add the \`promote-${{ needs.resolve.outputs.site_key }}\` label."
+            --body "Nothing to promote — no pages were ticked. Tick one or more, then re-add the \`promote-${{ needs.resolve.outputs.site_key }}\` label."
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
             --remove-label "promote-${{ needs.resolve.outputs.site_key }}"
           echo "### Nothing ticked — nothing promoted." >> "$GITHUB_STEP_SUMMARY"
 
   approve:
+    name: Approve going live
     needs: [resolve, collect]
     if: needs.collect.outputs.empty == 'false'
     runs-on: ubuntu-latest
     environment: production-approval
     steps:
       - run: |
-          echo "Approved content promotion for ${{ needs.resolve.outputs.site_key }}"
-          echo "Files: ${{ needs.collect.outputs.files }}"
+          echo "Approved for ${{ needs.resolve.outputs.display }}"
+          echo "Pages: ${{ needs.collect.outputs.files }}"
 
   promote:
+    name: Promote to live
     needs: [resolve, collect, approve]
     runs-on: ubuntu-latest
+    # Still needs the environment, but only to READ the theme back for
+    # verification. Nothing is written to Shopify by this job.
     environment: ${{ needs.resolve.outputs.env_name }}
     concurrency:
       group: content-${{ needs.resolve.outputs.site_key }}
     env:
       GH_TOKEN: ${{ github.token }}
       SITE_KEY: ${{ needs.resolve.outputs.site_key }}
+      DISPLAY: ${{ needs.resolve.outputs.display }}
       FILES: ${{ needs.collect.outputs.files }}
     steps:
       - uses: actions/checkout@v4
         with: { path: hub }
 
+      # Check out `main` — the branch connected to the live theme. This is the
+      # tree we commit into, and nothing else writes to it.
       - uses: actions/checkout@v4
         with:
           repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
@@ -234,73 +304,126 @@ jobs:
           token: ${{ secrets.ACCESS_PAT }}
           fetch-depth: 0
 
+      - name: Copy the ticked pages from staging onto main
+        working-directory: site
+        run: |
+          set -euo pipefail
+          git fetch origin staging
+
+          for f in $(printf '%s' "$FILES" | tr ',' ' '); do
+            if git cat-file -e "origin/staging:$f" 2>/dev/null; then
+              git checkout "origin/staging" -- "$f"
+              echo "staged $f"
+            else
+              echo "::error::$f does not exist on the staging branch."
+              exit 1
+            fi
+          done
+
+      - name: Commit and publish
+        id: commit
+        working-directory: site
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          if [ -z "$(git status --porcelain)" ]; then
+            # Not an error, but it must not be reported as a promotion either.
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Ticked pages are already identical to production — nothing to commit."
+            exit 0
+          fi
+
+          git add -- $(printf '%s' "$FILES" | tr ',' ' ')
+          git commit -m "Promote content to production ($FILES)
+
+          Promoted from the staging theme via issue #${{ github.event.issue.number }}.
+          To undo: git revert this commit on main."
+          git push origin main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Install Shopify CLI
+        if: steps.commit.outputs.changed == 'true'
         run: npm install -g @shopify/cli
 
       - name: Get Shopify access token
+        if: steps.commit.outputs.changed == 'true'
         uses: ./hub/.github/actions/shopify-token
         with:
           store: ${{ vars.STORE }}
           client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
           client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
 
-      - name: Snapshot current Prod content before overwriting
-        working-directory: site
+      # The rule that came out of the silent no-op: a successful write is not
+      # proof of a shipped change. Read the live theme back and confirm.
+      # Pulled into a directory OUTSIDE the tree we committed from, so this
+      # cannot repeat the mistake of clobbering its own source.
+      - name: Verify it actually reached the live theme
+        if: steps.commit.outputs.changed == 'true'
         run: |
-          # Pull what is live NOW, commit it to a per-site snapshot branch, so a
-          # bad promotion can always be reverted to a known-good state.
-          mkdir -p ../prod-snapshot
-          shopify theme pull \
-            --path ../prod-snapshot \
-            --nodelete \
-            --only "templates/*.json" \
-            --theme ${{ vars.THEME_ID }} \
-            --store ${{ vars.STORE }}
+          set -euo pipefail
+          ok=false
+          for attempt in 1 2 3 4 5 6; do
+            rm -rf verify && mkdir -p verify
+            shopify theme pull \
+              --path ./verify \
+              --nodelete \
+              --only "templates/*.json" \
+              --theme ${{ vars.THEME_ID }} \
+              --store ${{ vars.STORE }} >/dev/null 2>&1 || true
 
-          BRANCH="content-snapshots-$SITE_KEY"
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git checkout -B "$BRANCH"
-          mkdir -p templates
-          cp -f ../prod-snapshot/templates/*.json templates/ 2>/dev/null || true
-          git add -A templates
-          git commit -m "Prod content snapshot before promotion (issue #${{ github.event.issue.number }})" || echo "Nothing to snapshot"
-          git push origin "$BRANCH" --force
+            node hub/scripts/compare-content.mjs --a ./site/templates --b ./verify/templates --json > v.json
+            still=$(node -e "
+              const j=require('./v.json');
+              const want='$FILES'.split(',');
+              const bad=(j.changed||[]).concat(j.onlyA||[]).filter(f=>want.includes(f));
+              console.log(bad.join(','));
+            ")
+            if [ -z "$still" ]; then ok=true; break; fi
+            echo "attempt $attempt: not live yet ($still)"
+            sleep 15
+          done
 
-      - name: Build --only flags
-        run: |
-          echo "ONLY=$(printf '%s' "$FILES" | tr ',' '\n' | sed 's/^/--only /' | tr '\n' ' ')" >> "$GITHUB_ENV"
-
-      - name: Push ticked content to Prod
-        working-directory: site
-        run: |
-          set -o pipefail
-          shopify theme push \
-            --allow-live \
-            --nodelete \
-            $ONLY \
-            --theme ${{ vars.THEME_ID }} \
-            --store ${{ vars.STORE }} 2>&1 | tee push.log
-          if grep -qi "with errors" push.log; then
-            echo "::error::Push reported errors — content was NOT shipped."
+          if [ "$ok" != "true" ]; then
+            echo "::error::The commit landed on main but the live theme still does not match. Check the Shopify GitHub connection for this store."
             exit 1
           fi
+          echo "Verified: the live theme matches the promoted content."
 
-      - name: Report success and reset the checklist
+      - name: Report and reset the checklist
         if: success()
         run: |
-          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --body "Promoted to Production for **$SITE_KEY**: \`$FILES\`
-          Snapshot of the previous Prod content: \`content-snapshots-$SITE_KEY\` branch in \`${{ needs.resolve.outputs.repo }}\`."
+          if [ "${{ steps.commit.outputs.changed }}" != "true" ]; then
+            gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+              --body "**Nothing to promote — $DISPLAY**
+
+          The ticked pages are already identical to what is live, so nothing was changed. Your ticks have been cleared."
+          else
+            gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+              --body "**Now live on $DISPLAY**
+
+          Pages: \`$FILES\`
+
+          Verified against the live theme, not just reported as sent.
+
+          To undo, revert commit \`${{ steps.commit.outputs.sha }}\` on \`main\` in \`${{ needs.resolve.outputs.repo }}\` — that puts the previous content back automatically.
+
+          Ticks cleared, ready for the next batch."
+          fi
+
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "promote-$SITE_KEY"
           gh issue view ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --json body -q .body \
             | sed -E 's/^([[:space:]]*- )\[[xX]\]/\1[ ]/' > reset.md
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file reset.md
-          echo "### Promoted \`$FILES\` to $SITE_KEY production" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report failure
         if: failure()
         run: |
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
-            --body "Promotion FAILED for **$SITE_KEY** — nothing shipped. Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          The \`promote-$SITE_KEY\` label was left in place; fix the cause, then remove and re-add it to retry."
+            --body "**Promotion failed — $DISPLAY. Your ticks have been left alone.**
+
+          To retry: remove the \`promote-$SITE_KEY\` label and add it again.
+
+          Details: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

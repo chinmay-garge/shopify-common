@@ -1,0 +1,105 @@
+{%- comment -%}
+  FIXTURE — SITE-UNIQUE SECTION (site-a only). Sandbox section 6 of 10.
+
+  Exists ONLY in site-a; shopify-common has never seen it. This is the direct
+  stand-in for the comparison-table case during the real migration.
+
+  What it is designed to catch, in order:
+    1. drift-detection flags it as present in site-a but absent from common.
+    2. Porting it into common requires bringing its SNIPPET dependency
+       (snippets/sandbox-table-cell.liquid) — forget that and rendering breaks.
+    3. Porting it also requires adding its `t:` LOCALE KEYS to common's
+       locales/en.default.schema.json — forget that and the theme editor shows
+       "missing translation: t:sections.sandbox-table.name".
+    4. Even once the keys are committed, the editor STILL shows the missing
+       translation until Sync Locales runs, because both deploy workflows
+       ignore locales/*.json.
+
+  Steps 3 and 4 are exactly the bug that reached a live client store. This
+  fixture makes that sequence reproducible on demand.
+{%- endcomment -%}
+
+{% liquid
+  assign s = section.settings
+%}
+
+<div class="sandbox-table" style="padding: {{ s.padding }}px 20px;">
+  {%- if s.heading != blank -%}
+    <h2 class="sandbox-table__heading">{{ s.heading }}</h2>
+  {%- endif -%}
+
+  <table class="sandbox-table__table">
+    <thead>
+      <tr>
+        <th class="sandbox-table__th">{{ s.row_label_header }}</th>
+        {%- for block in section.blocks -%}
+          {%- if block.type == 'column' -%}
+            <th class="sandbox-table__th" {{ block.shopify_attributes }}>{{ block.settings.label }}</th>
+          {%- endif -%}
+        {%- endfor -%}
+      </tr>
+    </thead>
+    <tbody>
+      {%- for block in section.blocks -%}
+        {%- if block.type == 'row' -%}
+          <tr {{ block.shopify_attributes }}>
+            <td class="sandbox-table__td">{{ block.settings.label }}</td>
+            {%- assign cells = block.settings.cells | split: '|' -%}
+            {%- for cell in cells -%}
+              <td class="sandbox-table__td">
+                {% render 'sandbox-table-cell', value: cell %}
+              </td>
+            {%- endfor -%}
+          </tr>
+        {%- endif -%}
+      {%- endfor -%}
+    </tbody>
+  </table>
+</div>
+
+{% schema %}
+{
+  "name": "t:sections.sandbox-table.name",
+  "tag": "section",
+  "class": "sandbox-section",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "t:sections.sandbox-table.settings.heading", "default": "Comparison" },
+    { "type": "text", "id": "row_label_header", "label": "t:sections.sandbox-table.settings.row_label_header", "default": "Feature" },
+    { "type": "range", "id": "padding", "min": 0, "max": 100, "step": 4, "unit": "px", "label": "t:sections.sandbox-table.settings.padding", "default": 32 }
+  ],
+  "blocks": [
+    {
+      "type": "column",
+      "name": "t:sections.sandbox-table.blocks.column.name",
+      "settings": [
+        { "type": "text", "id": "label", "label": "t:sections.sandbox-table.blocks.column.settings.label", "default": "Column" }
+      ]
+    },
+    {
+      "type": "row",
+      "name": "t:sections.sandbox-table.blocks.row.name",
+      "settings": [
+        { "type": "text", "id": "label", "label": "t:sections.sandbox-table.blocks.row.settings.label", "default": "Row" },
+        {
+          "type": "text",
+          "id": "cells",
+          "label": "t:sections.sandbox-table.blocks.row.settings.cells",
+          "info": "t:sections.sandbox-table.blocks.row.settings.cells_info",
+          "default": "yes|no"
+        }
+      ]
+    }
+  ],
+  "presets": [
+    {
+      "name": "t:sections.sandbox-table.name",
+      "blocks": [
+        { "type": "column" },
+        { "type": "column" },
+        { "type": "row" },
+        { "type": "row" }
+      ]
+    }
+  ]
+}
+{% endschema %}

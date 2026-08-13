@@ -1,0 +1,141 @@
+name: Cut a Release
+
+# The button version of release.sh, so shipping does not require a terminal,
+# a checkout, or knowing the version convention.
+#
+# What it does:
+#   1. optionally merges the branches being released into main
+#   2. stamps theme_version as YYYY-MM-DD-N so the deployed theme is identifiable
+#      in the Shopify admin
+#   3. creates a GitHub release
+#
+# It does NOT deploy. Creating the release triggers Deploy - Production, which
+# stops at the approval gate — so cutting a release is always safe.
+#
+# IMPORTANT — the reason this uses ACCESS_PAT rather than the built-in token:
+# GitHub deliberately does not fire workflow triggers for events created with
+# GITHUB_TOKEN, to prevent recursive runs. A release created with the default
+# token would appear in the Releases tab and silently deploy nothing. Using a
+# PAT makes the `release: created` trigger fire as intended.
+
+on:
+  workflow_dispatch:
+    inputs:
+      merge_branches:
+        description: 'Branches to merge into main first (space-separated, blank to release main as-is)'
+        type: string
+        required: false
+        default: staging
+      version:
+        description: 'Version tag (blank = auto YYYY-MM-DD-N)'
+        type: string
+        required: false
+      title:
+        description: 'Release title (blank = "Release <version>")'
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Cut release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          # Needs the PAT so the push and the release both come from a real
+          # identity — see the note at the top about trigger suppression.
+          token: ${{ secrets.ACCESS_PAT }}
+
+      - name: Merge the branches being released
+        if: inputs.merge_branches != ''
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          for b in ${{ inputs.merge_branches }}; do
+            echo "Merging origin/$b"
+            git fetch origin "$b"
+            if ! git merge --no-edit "origin/$b"; then
+              echo "::error::Merge of '$b' into main conflicts. Resolve it in a PR first, then re-run."
+              exit 1
+            fi
+          done
+
+      - name: Work out the version
+        id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          REQUESTED='${{ inputs.version }}'
+          if [ -n "$REQUESTED" ]; then
+            VERSION="$REQUESTED"
+          else
+            TODAY=$(date -u +%Y-%m-%d)
+            # Count today's existing releases and increment.
+            N=$(gh release list --limit 100 --json tagName -q '.[].tagName' | grep -c "^${TODAY}-" || true)
+            VERSION="${TODAY}-$((N + 1))"
+          fi
+
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "::error::Release '$VERSION' already exists. Pass an explicit version."
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Stamp theme_version
+        run: |
+          set -euo pipefail
+          SCHEMA=theme/config/settings_schema.json
+          VERSION='${{ steps.v.outputs.version }}'
+
+          if [ ! -f "$SCHEMA" ]; then
+            echo "::warning::$SCHEMA not found — skipping the version stamp."
+            exit 0
+          fi
+
+          tmp=$(mktemp)
+          jq --arg v "$VERSION" \
+            'map(if .name == "theme_info" then .theme_version = $v else . end)' \
+            "$SCHEMA" > "$tmp"
+          mv "$tmp" "$SCHEMA"
+
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          if [ -n "$(git status --porcelain "$SCHEMA")" ]; then
+            git add "$SCHEMA"
+            git commit -m "Bump theme_version to $VERSION"
+          else
+            echo "theme_version was already $VERSION."
+          fi
+
+      - name: Push main
+        run: git push origin main
+
+      - name: Create the release
+        env:
+          # PAT, not GITHUB_TOKEN — otherwise Deploy - Production never fires.
+          GH_TOKEN: ${{ secrets.ACCESS_PAT }}
+        run: |
+          set -euo pipefail
+          VERSION='${{ steps.v.outputs.version }}'
+          TITLE='${{ inputs.title }}'
+          [ -n "$TITLE" ] || TITLE="Release $VERSION"
+
+          gh release create "$VERSION" --title "$TITLE" --generate-notes
+
+          {
+            echo "## Released \`$VERSION\`"
+            echo ""
+            echo "**Deploy - Production has started and is waiting for approval.**"
+            echo "Nothing has reached any store yet."
+            echo ""
+            echo "Approve it here: ${{ github.server_url }}/${{ github.repository }}/actions"
+          } >> "$GITHUB_STEP_SUMMARY"

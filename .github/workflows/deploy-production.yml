@@ -117,6 +117,7 @@ jobs:
           shopify theme push -j \
             --allow-live \
             --path theme/ \
+            --nodelete \
             --ignore "src/*" \
             --ignore ".theme-check.yml" \
             --ignore package.json \
@@ -141,3 +142,47 @@ jobs:
           else
             echo "### ${{ matrix.site }}: push failed, no output captured" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  # A failed production deploy is the one thing nobody should have to notice by
+  # chance. GitHub emails the actor, but that misses everyone else — so leave a
+  # visible artefact in the repo instead.
+  notify-failure:
+    name: Report failure
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open a failure issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref_name }}
+        run: |
+          gh label create "deploy-failure" --repo "$GITHUB_REPOSITORY" \
+            --color b60205 -d "A production deploy failed" 2>/dev/null || true
+
+          {
+            echo "A **production** deploy failed. One or more sites may be part-deployed."
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Release / ref | \`$REF\` |"
+            echo "| Run | ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }} |"
+            echo ""
+            echo "Sites deploy independently (\`fail-fast: false\`), so check the run to see"
+            echo "which succeeded before deciding what to do."
+            echo ""
+            echo "**To get back to a known-good state**, run the **Rollback - Production**"
+            echo "workflow for the affected site(s):"
+            echo "- \`redeploy-tag\` with the previous release tag — restores code only"
+            echo "- \`restore-backup\` with this run's ID — restores code and content"
+            echo ""
+            echo "Each site's pre-deploy backup is attached to the failed run as"
+            echo "\`backup-<SITE>-${{ github.run_id }}\`, retained for 90 days."
+          } > body.md
+
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Production deploy failed — $REF" \
+            --label "deploy-failure" \
+            --body-file body.md
