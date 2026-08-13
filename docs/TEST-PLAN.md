@@ -209,13 +209,13 @@ all of this.
 
 - [x] **F1 — Port a unique section.** PASSED, both halves. **Incomplete port** (section only, no snippet, no locale keys) was caught by Validate with `MissingTemplate` naming `snippets/sandbox-table-cell.liquid` at the `{% render %}` line, plus 11 × `ValidSchemaTranslations`. **Completed port** (snippet + locale keys added) went green. This is the client's comparison-table mistake, now caught at PR time instead of by a human opening the theme editor.
 
-- [x] **F2 — Port the simple case.**  needed no locale
-      keys and no snippet dependency, so it is the true simple case. Validate
-      passed on the first try, no additional work needed.
+- [x] **F2 — Port the simple case.** `sandbox-steps` needed no locale keys and
+      no snippet dependency, so it is the true simple case. Validate passed on
+      the first try, no additional work needed.
       One complication surfaced while setting this up, not part of the test
-      itself: the fixture had been deleted from site-b's  branch by
-      an earlier pre- deploy (same bug as J3/J5, a second
-      instance). It survived on , was restored to  from
+      itself: the fixture had been deleted from site-b's `staging` branch by
+      an earlier pre-`--nodelete` deploy — the same bug as J3/J5, a second
+      instance of it. It survived on `main`, was restored to `staging` from
       there, and only then ported.
 
 - [x] **F3 — Cold onboarding.** PASSED. Adding `SITE-D` to the matrix with no environment configured: `Deploy (SITE-D)` failed while SITE-A, SITE-B and SITE-C all succeeded, and the failure came from the token action's own diagnostic rather than an opaque error. Matrix variable restored afterwards.
