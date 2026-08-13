@@ -84,11 +84,24 @@ jobs:
           client-id: ${{ secrets.SHOPIFY_CLIENT_ID }}
           client-secret: ${{ secrets.SHOPIFY_CLIENT_SECRET }}
 
+      # --nodelete is not optional. Without it, `shopify theme push` removes any
+      # file on the theme that is absent locally — which deletes a site's own
+      # sections/snippets, and (because the theme is GitHub-connected) propagates
+      # that deletion back into the site repo, destroying the git record too.
+      #
+      # Measured, not theorised: a deploy without it deleted site-a's
+      # sandbox-table.liquid and sandbox-table-cell.liquid from both the theme
+      # and the repo. See docs/TEST-PLAN.md J3.
+      #
+      # Trade-off accepted: files intentionally removed from the shared repo will
+      # linger on themes. Removing them needs a deliberate prune, not a silent
+      # side effect of every deploy.
       - name: Push theme code to Staging
         id: push
         run: |
           shopify theme push -j \
             --path theme/ \
+            --nodelete \
             --ignore "src/*" \
             --ignore ".theme-check.yml" \
             --ignore package.json \

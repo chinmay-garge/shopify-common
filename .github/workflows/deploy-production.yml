@@ -117,6 +117,7 @@ jobs:
           shopify theme push -j \
             --allow-live \
             --path theme/ \
+            --nodelete \
             --ignore "src/*" \
             --ignore ".theme-check.yml" \
             --ignore package.json \

@@ -296,11 +296,59 @@ the workflow's app or team.
       commit on the site repo's `staging` branch. This is the premise everything
       else assumes.
 - [ ] **J2 — Commit → theme.** A commit to `staging` reaches the Staging theme.
-- [ ] **J3 — Echo-back from a CI deploy.** The one to watch. CI pushes code to a
-      theme that the integration also writes to, so Shopify may commit the deploy
-      back into the branch. **Not hypothetical** — the client's own troubleshooting
-      documents it causing non-fast-forward rejections. Needs measuring: does it
-      happen, does it loop, does it trip `drift-detection` or `content-changed`.
+- [x] **J3 — Echo-back from a CI deploy. This found the worst bug in the setup.**
+
+      The echo is real: a staging deploy produced
+      `shopify[bot]: Update from Shopify for theme staging` on all three site
+      repos within a minute.
+
+      But the echo was not the problem — what it *carried* was. The commit
+      **deleted** site-a's own files:
+      ```
+      sections/sandbox-table.liquid      | 105 ------------------------
+      snippets/sandbox-table-cell.liquid |  22 ------
+      ```
+      Cause: `shopify theme push` removes remote files absent locally unless
+      `--nodelete` is passed, and **neither deploy workflow passed it**. So the
+      deploy deleted the site's unique section from the theme, and because the
+      theme is GitHub-connected, Shopify then committed that deletion **back into
+      the repo** — destroying the git record as well.
+
+      Those two files are the stand-in for skinstylus's `comparison-table`, i.e.
+      exactly the class of file the real migration is about.
+
+      How narrowly this was survived: the files remained on `main` only because we
+      had deployed to staging alone. `main` is connected to the live theme, so a
+      production deploy would have deleted them from **both** branches — gone from
+      the theme, gone from the repo, no git history anywhere.
+
+      **The client repo has the same exposure.** `hydrafacial`'s
+      `deploy-staging.yml` and `deploy-production.yml` contain zero occurrences of
+      `--nodelete`; skinstylus's workflow used it. Today it is masked because the
+      five regions are meant to hold identical code — but any region-specific file,
+      or any file not yet ported during the skinstylus migration, is deleted on the
+      next deploy.
+
+      Fixed here by adding `--nodelete` to both deploys, with the trade-off stated
+      in the workflow: files intentionally removed from the shared repo now linger
+      on themes, and clearing them should be a deliberate prune rather than a
+      silent side effect of every deploy. **A prune path does not exist yet** —
+      noted as a gap rather than quietly ignored. (The client had a
+      `theme-prune.yml`, since retired.)
+- [x] **J3a — No runaway loop, but the workflows watched the wrong branch.**
+      The echo triggered nothing, which was luck rather than design: it landed on
+      `staging` while both site workflows watched `main`. In the two-branch model
+      that is simply wrong — editors work in the Staging theme, so their commits
+      land on `staging`. `content-changed` would never have fired for a real
+      editor change, and drift detection was blind to the branch receiving all the
+      activity. Now `content-changed` watches `staging`, and `drift-detection`
+      watches both.
+      Worth keeping in mind: the fix re-opens the loop question, since
+      `content-changed` now watches the branch the echo lands on. It is contained
+      by the path filter — the echo carries `.liquid`/`.css`/`settings_schema.json`,
+      none of which match `templates/**.json`, `sections/*.json` or
+      `settings_data.json`. That containment is a path filter away from breaking,
+      so it is deliberate, not incidental.
 - [ ] **J4 — Commit to `main` publishes.** Confirm the risk above is real, then
       confirm protection plus the gated workflow contains it.
 - [ ] **J5 — Promotion as a merge.** If J1–J4 behave, promotion could become
@@ -321,4 +369,7 @@ Recorded as they come up, with the process change each one implies.
 | 4 | Line endings must be pinned repo-wide | Added `.gitattributes` with `* text=auto eol=lf` to all four repos. Without it a Windows checkout rewrites text to CRLF and byte-comparison reports every file as changed — the same effect that made 49 identical real files look diverged. Drift detection and content diffing both depend on byte equality. |
 | 5 | Shopify credential prefixes are easy to confuse, and all failures look identical (`401`) | Three wrong credentials were tried before one worked. Worth stating explicitly in the runbook: `shptka_` = Theme Access password, `shpss_` = Storefront token **and also the client secret**, `shpat_` = Admin API token (the one theme operations need). A 401 never says which mistake you made. |
 | 6 | A green deploy can silently not ship your change (E2) | The single most dangerous finding. Because `locales/*.json` is ignored by design, a locale change is committed, deployed successfully, and still absent from the theme. Any process doc must pair "locale changed?" with "run Sync Locales" — reading a green checkmark as proof is wrong. |
+| 8 | **A deploy without `--nodelete` deletes a site's own files — from the theme AND, via the GitHub connection, from the repo (J3)** | **The most serious finding. `hydrafacial`'s deploys pass `--nodelete` nowhere; skinstylus's did.** Masked today only because the five regions hold identical code. Fix before the skinstylus migration, or unported files are destroyed with no git record. Add a deliberate prune path for intentional removals. |
+| 9 | Connecting a theme per branch moves where activity lands (J3a) | Editors' commits arrive on the branch connected to the Staging theme, not `main`. Workflows written for a single-branch model watch the wrong branch and silently never fire. |
+| 10 | Shopify's GitHub app grants access per-repository, and repos created after install are excluded | "Connected account, empty repository dropdown" is this, not a broken connection. Also survives a GitHub account rename showing the old login. Belongs in the onboarding runbook. |
 | 7 | `uses:` resolves from `GITHUB_WORKSPACE`, not the workflow file | A local composite action is `./.github/actions/x` in the deploy workflows but `./hub/.github/actions/x` in `content-operations.yml`, which checks the repo out into `hub/`. Same class of bug as finding 3: multi-checkout workflows break path assumptions. |
