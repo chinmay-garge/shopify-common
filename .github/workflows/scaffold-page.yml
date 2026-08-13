@@ -1,0 +1,163 @@
+name: Scaffold Page Template
+
+# Provisions a new page template so it is available to attach in the theme
+# editor, BEFORE anyone tries to create the page.
+#
+# Why this exists
+# ----------------
+# "Add page → attach template" only lists templates that already exist ON THAT
+# SPECIFIC THEME. A template added only to Staging is invisible on Prod, so a
+# page assigned to it there breaks the moment its content reaches production.
+# This workflow puts the same empty template on both branches (and therefore
+# both themes) up front, so the picker has something valid on either side.
+#
+# What this does NOT do
+# ----------------------
+# Creating the Page object itself (Online Store -> Pages -> Add page) is store
+# data, not theme code, and no git/CI path touches it — that stays a manual
+# step for the editor, same reason the client's Admin-API version of this was
+# retired. This workflow only guarantees step 3 (attaching a template) has
+# something valid to attach.
+#
+# No approval gate on the main-branch commit, unlike content promotion: this
+# adds a new, unused file rather than changing anything a live page already
+# shows, so the blast radius is a naming clash at worst — caught by the
+# already-exists guard below, not by a human review.
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: 'Page slug, kebab-case (e.g. about-us) -> templates/page.about-us.json'
+        required: true
+        type: string
+      title:
+        description: 'Heading shown on the page and in the template picker'
+        required: true
+        type: string
+      sites:
+        description: 'Comma list of site keys (sb-a,sb-b,sb-c), or "all"'
+        required: true
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    name: Validate and build site matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+      slug: ${{ steps.m.outputs.slug }}
+    steps:
+      - id: m
+        env:
+          SLUG: ${{ inputs.slug }}
+          SITES: ${{ inputs.sites }}
+        run: |
+          set -euo pipefail
+
+          if ! [[ "$SLUG" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::'$SLUG' is not kebab-case (lowercase letters, digits, hyphens only)."
+            exit 1
+          fi
+
+          if [ "$SITES" = "all" ]; then
+            json='["sb-a","sb-b","sb-c"]'
+          else
+            json=$(echo "$SITES" | tr ',' '\n' | sed '/^$/d' | jq -R . | jq -sc .)
+          fi
+
+          for key in $(echo "$json" | jq -r '.[]'); do
+            case "$key" in
+              sb-a|sb-b|sb-c) : ;;
+              *) echo "::error::Unknown site key '$key' (expected sb-a|sb-b|sb-c)"; exit 1 ;;
+            esac
+          done
+
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "Scaffolding page.$SLUG.json for: $json"
+
+  scaffold:
+    name: Scaffold (${{ matrix.site }})
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        site: ${{ fromJson(needs.setup.outputs.matrix) }}
+    env:
+      SLUG: ${{ needs.setup.outputs.slug }}
+      TITLE: ${{ inputs.title }}
+    steps:
+      - id: resolve
+        run: |
+          case "${{ matrix.site }}" in
+            sb-a) repo=site-a; display="Site A" ;;
+            sb-b) repo=site-b; display="Site B" ;;
+            sb-c) repo=site-c; display="Site C" ;;
+          esac
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "display=$display" >> "$GITHUB_OUTPUT"
+
+      - name: Build the template file
+        run: |
+          mkdir -p templates
+          cat > "templates/page.${SLUG}.json" <<EOF
+          {
+            "sections": {
+              "hero": {
+                "type": "sandbox-hero",
+                "settings": {
+                  "heading": "${TITLE}",
+                  "use_h1": true
+                }
+              }
+            },
+            "order": ["hero"]
+          }
+          EOF
+          cat "templates/page.${SLUG}.json"
+
+      # One commit, both branches. Order matters: staging first so a failure
+      # there never leaves prod with a template staging does not have yet.
+      - name: Add to staging (no gate)
+        env:
+          GH_TOKEN: ${{ secrets.ACCESS_PAT }}
+        run: |
+          set -euo pipefail
+          gh api "repos/chinmay-garge/${{ steps.resolve.outputs.repo }}/contents/templates/page.${SLUG}.json?ref=staging" >/dev/null 2>&1 && {
+            echo "::error::templates/page.${SLUG}.json already exists on ${{ steps.resolve.outputs.repo }}'s staging branch. Choose a different slug, or this is a duplicate page."
+            exit 1
+          } || true
+
+          CONTENT_B64=$(base64 -w0 "templates/page.${SLUG}.json")
+          gh api --method PUT "repos/chinmay-garge/${{ steps.resolve.outputs.repo }}/contents/templates/page.${SLUG}.json" \
+            -f message="Scaffold page.${SLUG}.json (${{ steps.resolve.outputs.display }})" \
+            -f content="$CONTENT_B64" \
+            -f branch=staging
+
+      - name: Add to main (no gate — new file only, not a change to a live page)
+        env:
+          GH_TOKEN: ${{ secrets.ACCESS_PAT }}
+        run: |
+          set -euo pipefail
+          gh api "repos/chinmay-garge/${{ steps.resolve.outputs.repo }}/contents/templates/page.${SLUG}.json?ref=main" >/dev/null 2>&1 && {
+            echo "::error::templates/page.${SLUG}.json already exists on ${{ steps.resolve.outputs.repo }}'s main branch — staging was updated but main was left alone. Investigate before retrying."
+            exit 1
+          } || true
+
+          CONTENT_B64=$(base64 -w0 "templates/page.${SLUG}.json")
+          gh api --method PUT "repos/chinmay-garge/${{ steps.resolve.outputs.repo }}/contents/templates/page.${SLUG}.json" \
+            -f message="Scaffold page.${SLUG}.json (${{ steps.resolve.outputs.display }})" \
+            -f content="$CONTENT_B64" \
+            -f branch=main
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### ${{ steps.resolve.outputs.display }}: page.${SLUG}.json" >> "$GITHUB_STEP_SUMMARY"
+          echo "Available in the template picker on both Staging and Prod." >> "$GITHUB_STEP_SUMMARY"
