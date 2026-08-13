@@ -1,0 +1,22 @@
+{%- comment -%}
+  Snippet dependency of sections/sandbox-table.liquid — site-a only.
+
+  Deliberately a SEPARATE file so that porting the parent section without also
+  porting this one produces a broken render rather than an obvious error. That
+  is the failure mode being rehearsed.
+
+  Params:
+    value (string) — "yes" | "no" | any free text
+{%- endcomment -%}
+
+{%- liquid
+  assign v = value | strip | downcase
+-%}
+
+{%- if v == 'yes' -%}
+  <span class="sandbox-table__cell sandbox-table__cell--yes" aria-label="Yes">&#10003;</span>
+{%- elsif v == 'no' -%}
+  <span class="sandbox-table__cell sandbox-table__cell--no" aria-label="No">&#10007;</span>
+{%- else -%}
+  <span class="sandbox-table__cell">{{ value | strip }}</span>
+{%- endif -%}

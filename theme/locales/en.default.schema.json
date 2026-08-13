@@ -3491,6 +3491,30 @@
           }
         }
       }
+    },
+    "sandbox-table": {
+      "name": "Sandbox Table",
+      "settings": {
+        "heading": "Heading",
+        "row_label_header": "Row label column header",
+        "padding": "Padding"
+      },
+      "blocks": {
+        "column": {
+          "name": "Column",
+          "settings": {
+            "label": "Column header"
+          }
+        },
+        "row": {
+          "name": "Row",
+          "settings": {
+            "label": "Row label",
+            "cells": "Cell values",
+            "cells_info": "One value per column, separated by |, in the same order as your columns."
+          }
+        }
+      }
     }
   }
 }
