@@ -484,6 +484,31 @@ the branch-connection model instead of a raw CLI push.
       `fail-fast: false` per site, matching the pattern already proven for code
       deploys (B1/F3) — one site's naming clash would not block the others.
 
+## L. Bug found by manual testing
+
+Caught by the user testing the User-persona script by hand, not by anything
+automated — the exact reason that script exists.
+
+- [!] **L1 — Scaffolding a page on all 3 sites should notify all 3 checklists;
+      only Site A did.** Root cause: when the `staging`-branch-watching fix for
+      `content-changed.yml`/`drift-detection.yml` was made earlier, it was pushed
+      to `main` on all three site repos, then merged into `staging` — but that
+      merge was only actually done for `site-a`. `site-b` and `site-c`'s
+      `staging` branches still had the pre-fix version watching `branches:
+      [main]`, so a commit to their `staging` branch (which is what editor saves
+      and this scaffold both produce) triggered nothing. Confirmed via
+      `Drift Detection` firing normally on the same push (no path filter) while
+      `content-changed.yml` (path-filtered) stayed silent — isolating the fault
+      to the trigger condition, not the push itself.
+      Fixed by merging `main` into `staging` on both repos (one asset-file
+      conflict, resolved by keeping staging's own build output and taking the
+      workflow changes from `main`). Re-verified end to end on both: a content
+      edit on Site B's and Site C's Staging theme each correctly triggered its
+      own checklist's auto-diff comment.
+      Lesson: a per-repo fix pushed to `main` is not actually deployed until it
+      reaches every branch that participates in triggers — "fixed on main" and
+      "fixed" are not the same claim when `staging` is a live trigger surface too.
+
 ## Findings
 
 Recorded as they come up, with the process change each one implies.
