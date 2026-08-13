@@ -1,0 +1,107 @@
+name: Approve via Comment
+
+# Lets a promote's approval happen on the issue itself, instead of the editor
+# having to go to the Actions tab and back.
+#
+# This does NOT create a lighter-weight approval. It performs the exact same
+# API call the "Approve" button in the Actions UI makes — using ACCESS_PAT,
+# which belongs to the actual required reviewer on production-approval. A
+# `/approve` comment is exactly as authoritative as clicking that button.
+#
+# Two guards, because this repo is public and anyone can comment:
+#   1. Only usernames listed in the PROMOTE_APPROVERS repo variable can trigger
+#      anything — everyone else's `/approve` is silently ignored.
+#   2. The run to approve is identified by a hidden `<!-- pending-run: N -->`
+#      marker left in the "waiting for approval" comment (see the `collect`
+#      job in content-operations.yml) — never by trusting which issue the
+#      comment happened to land on.
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  issues: write
+
+jobs:
+  approve:
+    name: Approve the pending run
+    runs-on: ubuntu-latest
+    if: |
+      github.event.issue.pull_request == null &&
+      (github.event.comment.body == '/approve' || startsWith(github.event.comment.body, '/approve '))
+    steps:
+      - name: Check the commenter is an allowed approver
+        id: gate
+        env:
+          COMMENTER: ${{ github.event.comment.user.login }}
+          APPROVERS: ${{ vars.PROMOTE_APPROVERS }}
+        run: |
+          set -euo pipefail
+          allowed=false
+          IFS=',' read -ra list <<< "$APPROVERS"
+          for name in "${list[@]}"; do
+            name="$(echo "$name" | xargs)"
+            if [ "$name" = "$COMMENTER" ]; then allowed=true; fi
+          done
+          echo "allowed=$allowed" >> "$GITHUB_OUTPUT"
+          if [ "$allowed" = "false" ]; then
+            echo "$COMMENTER is not in PROMOTE_APPROVERS ($APPROVERS) — ignoring, no comment posted."
+          fi
+
+      - name: Find which run this comment approves
+        id: find
+        if: steps.gate.outputs.allowed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Newest matching marker wins — if more than one promote is pending on
+          # this issue somehow, the most recent request is the one being answered.
+          RUN_ID=$(gh issue view ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --json comments \
+            -q '[.comments[] | select(.body | test("<!-- pending-run: [0-9]+ -->")) | .body] | last
+                | capture("<!-- pending-run: (?<id>[0-9]+) -->").id')
+          if [ -z "$RUN_ID" ]; then
+            gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+              --body "Nothing pending to approve on this issue right now."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Approve it
+        if: steps.gate.outputs.allowed == 'true' && steps.find.outputs.found == 'true'
+        env:
+          # ACCESS_PAT, not github.token — approving a required-reviewer gate
+          # must come from an account that IS a listed reviewer. The default
+          # token acts as github-actions[bot], which is not one, and this call
+          # would be rejected.
+          GH_TOKEN: ${{ secrets.ACCESS_PAT }}
+          RUN_ID: ${{ steps.find.outputs.run_id }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          set -euo pipefail
+
+          ENV_IDS=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/pending_deployments" \
+            --jq '[.[] | select(.current_user_can_approve == true) | .environment.id]')
+
+          if [ "$ENV_IDS" = "[]" ]; then
+            gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+              --body "Run $RUN_ID has nothing left waiting for approval — it may already have been approved, or has finished."
+            exit 0
+          fi
+
+          cat > body.json <<EOF
+          {
+            "environment_ids": $ENV_IDS,
+            "state": "approved",
+            "comment": "Approved via issue comment by @$COMMENTER"
+          }
+          EOF
+
+          gh api --method POST "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/pending_deployments" \
+            --input body.json
+
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" \
+            --body "Approved by @$COMMENTER. Continuing: ${{ github.server_url }}/${{ github.repository }}/actions/runs/$RUN_ID"

@@ -325,6 +325,32 @@ jobs:
             --remove-label "$LABEL_PREFIX: promote"
           echo "### Nothing ticked — nothing promoted." >> "$GITHUB_STEP_SUMMARY"
 
+      # The `approve` job below is gated by `environment: production-approval` —
+      # a job-level gate pauses the ENTIRE job before any of its steps run, so it
+      # cannot post its own "waiting" comment. This has to happen here instead,
+      # while the run is still unblocked, with the run ID embedded so the
+      # comment-approval workflow (approve-via-comment.yml) knows which run a
+      # later "/approve" comment refers to.
+      - name: Ask for approval, right here on the issue
+        if: steps.c.outputs.empty == 'false'
+        env:
+          DISPLAY: ${{ needs.resolve.outputs.display }}
+          FILES: ${{ steps.c.outputs.files }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          APPROVERS: ${{ vars.PROMOTE_APPROVERS }}
+        run: |
+          {
+            echo "**Ready to go live on $DISPLAY** — waiting for approval."
+            echo ""
+            echo "Pages: \`$FILES\`"
+            echo ""
+            echo "Comment \`/approve\` on this issue to approve (only: $APPROVERS)."
+            echo "Or approve from the Actions tab: $RUN_URL"
+            echo ""
+            echo "<!-- pending-run: ${{ github.run_id }} -->"
+          } > wait.md
+          gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file wait.md
+
   approve:
     name: Approve going live
     needs: [resolve, collect]
