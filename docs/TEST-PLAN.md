@@ -349,13 +349,45 @@ the workflow's app or team.
       none of which match `templates/**.json`, `sections/*.json` or
       `settings_data.json`. That containment is a path filter away from breaking,
       so it is deliberate, not incidental.
-- [ ] **J4 — Commit to `main` publishes.** Confirm the risk above is real, then
-      confirm protection plus the gated workflow contains it.
-- [ ] **J5 — Promotion as a merge.** If J1–J4 behave, promotion could become
-      "commit the ticked files to `main`" instead of `theme push --only`, and the
-      `content-snapshots-*` branches become redundant because git history is the
-      snapshot. **Deliberately not built yet** — rewriting the promote job before
-      observing the echo-back would be guessing.
+- [x] **J4 — Commit to `main` publishes.** Confirmed, and quickly: committing a
+      template to `main` reached the live prod theme before the first poll.
+      The risk is real, and branch protection plus a gated writer is what
+      contains it.
+- [x] **J5 — Promotion must go through git, not the CLI. This is not an
+      optimisation; the CLI path does not work on a connected theme.**
+
+      Measured on the live prod theme (`163070083329`, connected to `main`):
+
+      | Path | Outcome |
+      |---|---|
+      | `shopify theme push --allow-live --only <file>` | log says **"The theme 'prod' (#163070083329) was pushed successfully."** — and the content **did not persist**; the template still read `r2` |
+      | commit the same file to `main` | reached the theme immediately; `r3-promoted` live |
+
+      So the promote job's `theme push --only` was a **silent no-op that reported
+      success**: green run, success comment on the issue, checklist reset, and
+      production unchanged. Worse than a failure, because everyone believes the
+      content shipped.
+
+      Not fully explained, and worth stating honestly rather than dressing up: the
+      earlier *staging* code deploy went the other way — the CLI push won and
+      Shopify echoed the change (including deletions) into the branch. So a CLI
+      push and a connected branch can each win, and the outcome was not
+      predictable from the outside. The client's own troubleshooting notes the same
+      fight, as non-fast-forward rejections.
+
+      What is reproducible: **going through git works every time; CLI pushes to a
+      connected theme cannot be relied on.** That is enough to decide the design.
+
+      Consequences to act on:
+      - the promote job must commit ticked files to the connected branch
+      - `content-snapshots-*` branches become redundant — `main`'s history is the
+        snapshot, and a revert is the rollback
+      - **code deploys are now suspect too**: `deploy-staging` CLI-pushes to a
+        connected theme. It appeared to work, but by the rule above it cannot be
+        trusted. Untested and important.
+- [ ] **J6 — Are code deploys durable against a connected theme?** The open
+      question J5 raises. If not, the shared-repo deploy model needs rethinking
+      for connected themes — deploy by committing to the site branch instead.
 
 ## Findings
 
@@ -369,6 +401,9 @@ Recorded as they come up, with the process change each one implies.
 | 4 | Line endings must be pinned repo-wide | Added `.gitattributes` with `* text=auto eol=lf` to all four repos. Without it a Windows checkout rewrites text to CRLF and byte-comparison reports every file as changed — the same effect that made 49 identical real files look diverged. Drift detection and content diffing both depend on byte equality. |
 | 5 | Shopify credential prefixes are easy to confuse, and all failures look identical (`401`) | Three wrong credentials were tried before one worked. Worth stating explicitly in the runbook: `shptka_` = Theme Access password, `shpss_` = Storefront token **and also the client secret**, `shpat_` = Admin API token (the one theme operations need). A 401 never says which mistake you made. |
 | 6 | A green deploy can silently not ship your change (E2) | The single most dangerous finding. Because `locales/*.json` is ignored by design, a locale change is committed, deployed successfully, and still absent from the theme. Any process doc must pair "locale changed?" with "run Sync Locales" — reading a green checkmark as proof is wrong. |
+| 11 | **A `theme push` to a GitHub-connected theme can report success and change nothing (J5)** | **The most dangerous class of failure found: a green run, a success comment, a reset checklist, and production untouched.** Anything writing to a connected theme must go through git — commit to the connected branch — not the CLI. Also means `--allow-live` succeeding is not evidence that anything shipped. |
+| 12 | Diff must be semantic, not byte-for-byte (D3) | Shopify prepends an auto-generated banner and materialises empty `"settings": {}`. A byte diff reported 10 of 10 templates changed when 1 had. A diff that always says "everything changed" is worse than none — reviewers stop reading it and approve blind. |
+| 13 | A connected theme means the branch, not the theme, is the unit of work | Reading `ref: main` for content that lives on `staging` made the diff compare production against itself, and would have made promote a no-op even without finding 11. |
 | 8 | **A deploy without `--nodelete` deletes a site's own files — from the theme AND, via the GitHub connection, from the repo (J3)** | **The most serious finding. `hydrafacial`'s deploys pass `--nodelete` nowhere; skinstylus's did.** Masked today only because the five regions hold identical code. Fix before the skinstylus migration, or unported files are destroyed with no git record. Add a deliberate prune path for intentional removals. |
 | 9 | Connecting a theme per branch moves where activity lands (J3a) | Editors' commits arrive on the branch connected to the Staging theme, not `main`. Workflows written for a single-branch model watch the wrong branch and silently never fire. |
 | 10 | Shopify's GitHub app grants access per-repository, and repos created after install are excluded | "Connected account, empty repository dropdown" is this, not a broken connection. Also survives a GitHub account rename showing the old login. Belongs in the onboarding runbook. |
