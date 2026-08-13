@@ -1,0 +1,49 @@
+{%- comment -%}
+  FIXTURE — SITE-UNIQUE SECTION (site-b only). Sandbox section 7 of 10.
+
+  Second porting fixture, kept deliberately simpler than sandbox-table: it has
+  NO snippet dependency and NO block types, only settings.
+
+  Having two porting fixtures of different complexity lets us test the
+  onboarding runbook twice and confirm the checklist is complete rather than
+  accidentally tuned to one file's shape:
+
+    sandbox-table  (site-a) -> section + snippet + block locale keys
+    sandbox-steps  (site-b) -> section + settings locale keys only
+
+  Note this file has NO t: keys at all — labels are plain strings. That is the
+  third variant worth covering: a section that needs no locale work when
+  ported, so we can prove the runbook does not blindly demand locale edits.
+{%- endcomment -%}
+
+{% liquid
+  assign s = section.settings
+%}
+
+<div class="sandbox-steps" data-sandbox-origin="SITE-B-UNIQUE" style="padding: {{ s.padding }}px 20px;">
+  {%- if s.heading != blank -%}
+    <h2 class="sandbox-steps__heading">{{ s.heading }}</h2>
+  {%- endif -%}
+
+  <ol class="sandbox-steps__list">
+    {%- if s.step_one != blank -%}<li class="sandbox-steps__item">{{ s.step_one }}</li>{%- endif -%}
+    {%- if s.step_two != blank -%}<li class="sandbox-steps__item">{{ s.step_two }}</li>{%- endif -%}
+    {%- if s.step_three != blank -%}<li class="sandbox-steps__item">{{ s.step_three }}</li>{%- endif -%}
+  </ol>
+</div>
+
+{% schema %}
+{
+  "name": "Sandbox Steps",
+  "tag": "section",
+  "class": "sandbox-section",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading", "default": "How it works" },
+    { "type": "text", "id": "step_one", "label": "Step one", "default": "Branch off main" },
+    { "type": "text", "id": "step_two", "label": "Step two", "default": "PR into staging" },
+    { "type": "text", "id": "step_three", "label": "Step three", "default": "Cut a release" },
+    { "type": "range", "id": "padding", "min": 0, "max": 100, "step": 4, "unit": "px", "label": "Padding", "default": 32 }
+  ],
+  "presets": [{ "name": "Sandbox Steps" }]
+}
+{% endschema %}

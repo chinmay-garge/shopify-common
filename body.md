@@ -7,17 +7,20 @@ _Auto-generated from `sb-a`'s repo, which is git-connected to its Staging theme 
 
 <!-- CONTENT-LIST:START -->
 ### Templates
+- [x] Nonexistent Page — `templates/page.does-not-exist.json`
 - [ ] 404 — Not found — `templates/404.json`
 - [ ] Cart — `templates/cart.json`
 - [ ] Contact — `templates/page.contact.json`
 - [ ] Home — `templates/index.json`
 - [ ] Page (default) — `templates/page.json`
 - [ ] Password — `templates/password.json`
-- [x] Sandbox Content — `templates/page.sandbox-content.json`
+- [ ] Sandbox Content — `templates/page.sandbox-content.json`
 - [ ] Sandbox New — `templates/page.sandbox-new.json`
 - [ ] Sandbox Showcase — `templates/page.sandbox-showcase.json`
 - [ ] Search — `templates/search.json`
 <!-- CONTENT-LIST:END -->
+
+
 
 
 
