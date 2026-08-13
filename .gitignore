@@ -7,3 +7,8 @@ theme/assets/*.vbt.*
 
 # Local Shopify CLI state
 .shopify/
+
+# Scratch files produced by local test runs of workflow steps
+body.md
+cmp.json
+v.json
