@@ -159,7 +159,10 @@ jobs:
         with:
           repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
           path: site
-          ref: main
+          # `staging`, not `main`. The Staging theme is connected to this branch,
+          # so this is the content an editor has actually produced. Reading `main`
+          # compared production against itself.
+          ref: staging
           token: ${{ secrets.ACCESS_PAT }}
 
       - name: Install Shopify CLI
@@ -185,11 +188,40 @@ jobs:
             --theme ${{ vars.THEME_ID }} \
             --store ${{ vars.STORE }}
 
+      # Compares SEMANTICALLY, not byte-for-byte. Shopify prepends an
+      # auto-generated banner to template JSON and materialises empty
+      # `"settings": {}` objects, so a plain diff reports every file as changed.
+      # Measured: a byte diff claimed all 10 templates differed when only 1 did.
+      # A report that always says "everything changed" gets ignored, and then a
+      # reviewer approves a promotion without reading it.
       - name: Compare and comment
+        env:
+          DISPLAY: ${{ needs.resolve.outputs.display }}
         run: |
-          node hub/scripts/gen-content-list.mjs \
-            --diff --staging ./site/templates --prod ./prod/templates --site "$SITE_KEY" > comment.md
-          cat comment.md
+          node hub/scripts/compare-content.mjs \
+            --a ./site/templates --b ./prod/templates --json > cmp.json
+          cat cmp.json
+
+          names() { node -e "const j=require('./cmp.json');console.log((j['$1']||[]).join(','))"; }
+          section() {
+            csv=$(names "$2")
+            [ -z "$csv" ] && return 0
+            printf '\n**%s**\n\n| Page | Template |\n|---|---|\n' "$1"
+            node hub/scripts/gen-content-list.mjs --names "$csv"
+          }
+
+          {
+            echo "**Staging ↔ Prod content diff — $DISPLAY**"
+            if [ "$(names changed)$(names onlyA)$(names onlyB)$(names unparseable)" = "" ]; then
+              printf '\nEverything is already in sync — nothing to promote.\n'
+            fi
+            section "Changed on Staging — not yet promoted" changed
+            section "New on Staging — not yet on Production" onlyA
+            section "On Production but missing from Staging" onlyB
+            section "Could not be parsed — needs a look" unparseable
+            printf '\n_%s template(s) already identical._\n' "$(node -e "console.log(require('./cmp.json').inSync)")"
+          } > comment.md
+
           gh issue comment ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --body-file comment.md
           gh issue edit ${{ github.event.issue.number }} --repo "$GITHUB_REPOSITORY" --remove-label "show-diff-$SITE_KEY"
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
@@ -254,7 +286,10 @@ jobs:
         with:
           repository: chinmay-garge/${{ needs.resolve.outputs.repo }}
           path: site
-          ref: main
+          # `staging` — this is the content being promoted. Reading `main` meant
+          # promoting production's own content back to production: a silent no-op
+          # that reports success and ships nothing.
+          ref: staging
           token: ${{ secrets.ACCESS_PAT }}
           fetch-depth: 0
 
