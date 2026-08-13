@@ -537,6 +537,55 @@ reviewer) — not a lighter-weight shortcut, the same authority.
       variable, not hardcoded in the workflow — adding a second approver later
       needs a variable edit, not a workflow change.
 
+## N. Alerting on a direct live-theme edit
+
+The negative test case: staging should always be ahead of production. If
+someone edits the LIVE theme directly in the Shopify admin — bypassing staging
+and the whole promote pipeline entirely — that invariant breaks silently
+today. This adds detection and a real email alert, with no new mail
+infrastructure (GitHub emails issue assignees automatically).
+
+- [x] **N1 — First design was wrong, caught by testing rather than assumed
+      correct.** Naive version: alert on any commit authored by `shopify[bot]`.
+      Rejected immediately — that author ALSO appears after every legitimate
+      promote/deploy, so it would fire on every routine release.
+      Second version: walk back to the last commit *we* made ourselves and
+      diff file lists. **Passed its own first test only by coincidence** — a
+      simulated direct edit followed by its own revert happened to cancel out
+      to identical content, so the "no false alarm" result was really "no net
+      change", not "correctly reasoned". A follow-up test with a genuinely
+      different deployed value exposed the real flaw: code deploys are pushed
+      via CLI from a different repo (`shopify-common`) and never create a
+      matching commit inside the site repo's own history, so every legitimate
+      code deploy looked unexplained and false-alarmed (issue #9). Confirmed,
+      not assumed, before rebuilding.
+- [x] **N2 — Third design: compare content against source of truth, not
+      commit history.** For each file in a `shopify[bot]` echo commit: code
+      files (`sections/`, `snippets/`, `blocks/`, `layout/`, `assets/`) are
+      compared against `shopify-common`'s `theme/`; content files
+      (`templates/`, `config/settings_data.json`) against the site repo's own
+      `staging` branch. A match means the echo is expected, regardless of
+      which mechanism produced it — a match makes the origin irrelevant.
+- [x] **N3 — Silent on a real, different deploy.** Deployed a genuinely new
+      marker value (`v3`, distinct from the earlier `v2` used in the flawed
+      test) through the normal `Deploy - Production` → approval → live path.
+      The resulting echo was checked and logged
+      `ok: sections/sandbox-hero.liquid matches its source of truth` — verified
+      from the actual log output, not inferred from the absence of an issue.
+      Zero open alerts.
+- [x] **N4 — Fires on a real direct edit.** Pushed a change directly to the
+      live theme via the CLI (`--allow-live`), bypassing `staging` and
+      `shopify-common` entirely. Correctly created issue #11, naming the exact
+      file and commit, assigned to `chinmay-garge` — which triggers a real
+      email via GitHub's own assignee notification, no SMTP credentials
+      involved.
+- [x] **N5 — Restoring live content afterward doesn't itself alarm.** The
+      cleanup deploy that restored the legitimate `v3` value ran cleanly with
+      zero new alerts, confirmed by re-pulling the live theme directly
+      (`data-direct-edit-test-2` gone, only `v3` and the earlier `j6-marker`
+      remain) rather than trusting the deploy's own success report — the same
+      "verify, don't assume" rule the promote job already lives by.
+
 ## Findings
 
 Recorded as they come up, with the process change each one implies.
