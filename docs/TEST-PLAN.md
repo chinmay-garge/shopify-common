@@ -509,6 +509,34 @@ automated — the exact reason that script exists.
       reaches every branch that participates in triggers — "fixed on main" and
       "fixed" are not the same claim when `staging` is a live trigger surface too.
 
+## M. Approve production promotes from the issue itself
+
+A UX request: an editor shouldn't have to leave the issue and go to the Actions
+tab to approve a promote. `/approve` performs the exact same API call the
+"Approve" button makes, using `ACCESS_PAT` (belongs to the actual required
+reviewer) — not a lighter-weight shortcut, the same authority.
+
+- [x] **M1 — End-to-end approval via comment.** Ticked a page, added
+      `site-a: promote`. The `collect` job posted a "waiting for approval"
+      comment with a hidden `<!-- pending-run: N -->` marker before the job-level
+      gate paused everything else. Commenting `/approve` triggered
+      `approve-via-comment.yml`, which found the run from the marker, called the
+      pending-deployments API, and the promote resumed and completed —
+      "Now live on Site A" posted automatically. Verified independently by
+      pulling the live theme directly: `r6-comment-approve-test` present.
+- [x] **M2 — Unauthorized commenter is silently ignored.** Posted `/approve` as
+      `akshay-c-coditas` (a genuinely different GitHub account, not an alias —
+      `chinmaycoditas` turned out to be a renamed alias of `chinmay-garge`
+      itself and could not be used for this). Result: **no bot reply of any
+      kind** — not even an error — and the run's pending-deployment count stayed
+      at 0. The log shows the actual check: `"akshay-c-coditas is not in
+      PROMOTE_APPROVERS (chinmay-garge) — ignoring, no comment posted."` Total
+      silence is the correct behaviour here: confirming receipt to an
+      unauthorized user is itself information leakage.
+- [x] **M3 — Approver list is data, not code.** `PROMOTE_APPROVERS` is a repo
+      variable, not hardcoded in the workflow — adding a second approver later
+      needs a variable edit, not a workflow change.
+
 ## Findings
 
 Recorded as they come up, with the process change each one implies.
